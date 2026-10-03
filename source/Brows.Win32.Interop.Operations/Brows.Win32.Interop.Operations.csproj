@@ -1,0 +1,10 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Brows.Operations" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Brows.Win32.Interop\Brows.Win32.Interop.csproj" />
+  </ItemGroup>
+</Project>

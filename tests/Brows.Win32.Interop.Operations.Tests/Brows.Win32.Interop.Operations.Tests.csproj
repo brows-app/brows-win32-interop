@@ -1,0 +1,7 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\source\Brows.Win32.Interop.Operations\Brows.Win32.Interop.Operations.csproj" />
+  </ItemGroup>
+</Project>

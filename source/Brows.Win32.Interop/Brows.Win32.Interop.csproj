@@ -1,0 +1,11 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Brows.Win32.STAThreadPool" />
+    <PackageReference Include="Domore.Logs" />
+    <PackageReference Include="Microsoft.CSharp"
+                      Condition="'$(TargetFramework)' == 'net462' Or
+                                 '$(TargetFramework)' == 'net48'"/>
+  </ItemGroup>
+</Project>

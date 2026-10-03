@@ -1,0 +1,32 @@
+<Solution>
+  <Folder Name="/.github/" />
+  <Folder Name="/.github/workflows/">
+    <File Path=".github/workflows/workflow.yml" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Brows.Win32.Interop.Operations.Tests/Brows.Win32.Interop.Operations.Tests.csproj" Id="acdc714e-532c-4807-8a82-fbbb754b58b9" />
+    <Project Path="tests/Brows.Win32.Interop.Tests/Brows.Win32.Interop.Tests.csproj" Id="3802a386-74c2-4b22-8b21-e2f18f2417ab" />
+  </Folder>
+  <Folder Name="/_/">
+    <File Path=".editorconfig" />
+    <File Path=".gitattributes" />
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+    <File Path="LICENSE" />
+    <File Path="README.md" />
+    <File Path="spelling.exclusion.dic" />
+  </Folder>
+  <Folder Name="/_/samples/">
+    <File Path="samples/Directory.Build.props" />
+  </Folder>
+  <Folder Name="/_/source/">
+    <File Path="source/Directory.Build.props" />
+  </Folder>
+  <Folder Name="/_/tests/">
+    <File Path="tests/Directory.Build.props" />
+  </Folder>
+  <Project Path="source/Brows.Win32.Interop.Operations/Brows.Win32.Interop.Operations.csproj" Id="5bd4c986-5a35-41c1-b140-df197887d011" />
+  <Project Path="source/Brows.Win32.Interop/Brows.Win32.Interop.csproj" Id="ef01d5ea-1bb1-4488-9461-c854376be6d0" />
+</Solution>
