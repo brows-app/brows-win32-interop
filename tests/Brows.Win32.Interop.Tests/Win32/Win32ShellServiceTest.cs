@@ -15,7 +15,7 @@ public sealed class Win32ShellServiceTest {
     private static void CreateShortcut(string shortcutPath, string targetPath) {
         var shellType = Type.GetTypeFromProgID("WScript.Shell", throwOnError: true);
         var shellObject = Activator.CreateInstance(shellType);
-        object shortcutObject = null;
+        var shortcutObject = default(object);
         try {
             dynamic shell = shellObject;
             shortcutObject = shell.CreateShortcut(shortcutPath);
