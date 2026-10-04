@@ -6,8 +6,8 @@ It covered native signatures, COM vtable order, HRESULT handling, apartment use,
 and path handling.
 
 There are **22 numbered findings** below. Findings **#1–16 and #18–20 remain fixed or resolved**;
-**#17 remains open**, and the final review added **#21 and #22**, both open. No production code was changed
-during this review.
+**#17 remains open**. Findings **#21 and #22** were added during the final review; their current statuses
+and fix validation are recorded in their sections below. The final review did not change production code.
 
 The Boolean returned by `Work` and `Operate` indicates that work was queued for native execution, rather than
 success for every item; returning `true` after the invalid-name probe is expected under that contract.
@@ -319,16 +319,23 @@ The original full-build warnings were documentation defects, not evidence of inc
 
 The package project link now identifies the correct repository.
 
-### 21. [P2] Shortcut lookup fails for a filename relative to the current directory
+### 21. [P2] Shortcut lookup fails for a filename relative to the current directory — Resolved
 
-**Status: Open. Added during the final review.**
+**Status: Resolved.**
 
 **Location:**
-[Win32ShellService.cs:144–147](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L144).
+[Win32ShellService.cs:137,145–146](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L137).
 
-`GetLinkPath("document.lnk", token)` passes `Path.GetDirectoryName(file)`, an empty string for this input, to
-`Shell.NameSpace`. The Shell returns no folder, so the method returns `null` even when that shortcut exists in
-the current directory and has a valid target. The public API does not restrict the shortcut path to absolute paths.
+Before the fix, `GetLinkPath("document.lnk", token)` passed `Path.GetDirectoryName(file)`, an empty string for this
+input, to `Shell.NameSpace`. The Shell returned no folder, so the method returned `null` even when that shortcut
+existed in the current directory and had a valid target. The public API does not restrict the shortcut path to
+absolute paths.
+
+**Resolution:** `GetLinkPath` now calls `Path.GetFullPath` on the caller thread before queuing the Shell lookup.
+Regression tests cover a bare filename, a relative directory path, and a queued lookup while the process current
+directory changes. All three failed against the original implementation and passed after the fix on
+`net10.0-windows`. After the fix, the affected test project passed all 19 cases on each of `net462`, `net48`,
+`net8.0-windows`, and `net10.0-windows`.
 
 **Reproduced:** In .NET 10 x64 and .NET Framework 4.6.2 x86, a valid shortcut resolved to its target when passed
 by absolute path, but the same shortcut returned `null` when passed as `document.lnk` from its containing directory.

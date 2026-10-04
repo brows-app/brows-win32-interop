@@ -134,6 +134,7 @@ public sealed class Win32ShellService : Win32BaseService {
                 return null;
             }
             try {
+                string shortcutPath = Path.GetFullPath(file);
                 var work = ThreadPool.Work(
                     name: nameof(GetLinkPath),
                     cancellationToken: cancellationToken,
@@ -141,8 +142,8 @@ public sealed class Win32ShellService : Win32BaseService {
                         using (var wrapper = new ShellWrapper()) {
                             return wrapper.UseShell(wrapped => {
                                 var shell = (dynamic)wrapped;
-                                var folder = shell.NameSpace(Path.GetDirectoryName(file));
-                                var folderItem = folder?.ParseName(Path.GetFileName(file));
+                                var folder = shell.NameSpace(Path.GetDirectoryName(shortcutPath));
+                                var folderItem = folder?.ParseName(Path.GetFileName(shortcutPath));
                                 var link = folderItem?.GetLink;
                                 var path = link?.Path;
                                 return path;
