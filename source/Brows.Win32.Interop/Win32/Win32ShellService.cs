@@ -39,15 +39,17 @@ public sealed class Win32ShellService : Win32BaseService {
     }
 
     private async Task ExecuteAsync(string file,
-                                    string parameters,
+                                    Func<string> parametersFactory,
                                     string verb,
                                     string name,
-                                    Func<string> parametersFactory,
                                     CancellationToken cancellationToken) {
         BeginOperation();
         try {
-            if (parametersFactory != null) {
-                cancellationToken.ThrowIfCancellationRequested();
+            var parameters = default(string);
+            if (parametersFactory is not null) {
+                if (cancellationToken.IsCancellationRequested) {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
                 parameters = parametersFactory();
             }
             var work = ThreadPool.Work(
@@ -92,7 +94,6 @@ public sealed class Win32ShellService : Win32BaseService {
     public Task ExecuteDefault(string file, CancellationToken cancellationToken = default) {
         return ExecuteAsync(
             file,
-            parameters: null,
             verb: null,
             name: nameof(ExecuteDefault),
             parametersFactory: null,
@@ -109,7 +110,6 @@ public sealed class Win32ShellService : Win32BaseService {
     public Task ExecuteDefault(string file, string with, CancellationToken cancellationToken = default) {
         return ExecuteAsync(
             file: with,
-            parameters: null,
             verb: null,
             name: nameof(ExecuteDefault),
             parametersFactory: () => $"\"{(string.IsNullOrEmpty(file) ? file : Path.GetFullPath(file))}\"",
@@ -125,7 +125,6 @@ public sealed class Win32ShellService : Win32BaseService {
     public Task ExecuteProperties(string file, CancellationToken cancellationToken = default) {
         return ExecuteAsync(
             file,
-            parameters: null,
             verb: "properties",
             name: nameof(ExecuteProperties),
             parametersFactory: null,
