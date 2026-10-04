@@ -2,6 +2,7 @@
 using Brows.Win32.InteropServices;
 using Brows.Win32.PlatformInvoke;
 using Domore.Logs;
+using System;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -41,9 +42,14 @@ public sealed class Win32ShellService : Win32BaseService {
                                     string parameters,
                                     string verb,
                                     string name,
+                                    Func<string> parametersFactory,
                                     CancellationToken cancellationToken) {
         BeginOperation();
         try {
+            if (parametersFactory != null) {
+                cancellationToken.ThrowIfCancellationRequested();
+                parameters = parametersFactory();
+            }
             var work = ThreadPool.Work(
                 name: name,
                 work: () => Execute(file, parameters, verb),
@@ -85,7 +91,12 @@ public sealed class Win32ShellService : Win32BaseService {
     /// <returns>A task that completes when the Shell execution call finishes.</returns>
     public Task ExecuteDefault(string file, CancellationToken cancellationToken = default) {
         return ExecuteAsync(
-            file, parameters: null, verb: null, name: nameof(ExecuteDefault), cancellationToken);
+            file,
+            parameters: null,
+            verb: null,
+            name: nameof(ExecuteDefault),
+            parametersFactory: null,
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -97,7 +108,12 @@ public sealed class Win32ShellService : Win32BaseService {
     /// <returns>A task that completes when the Shell execution call finishes.</returns>
     public Task ExecuteDefault(string file, string with, CancellationToken cancellationToken = default) {
         return ExecuteAsync(
-            file: with, parameters: $"\"{file}\"", verb: null, name: nameof(ExecuteDefault), cancellationToken);
+            file: with,
+            parameters: null,
+            verb: null,
+            name: nameof(ExecuteDefault),
+            parametersFactory: () => $"\"{(string.IsNullOrEmpty(file) ? file : Path.GetFullPath(file))}\"",
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -108,7 +124,12 @@ public sealed class Win32ShellService : Win32BaseService {
     /// <returns>A task that completes when the Shell execution call finishes.</returns>
     public Task ExecuteProperties(string file, CancellationToken cancellationToken = default) {
         return ExecuteAsync(
-            file, parameters: null, verb: "properties", name: nameof(ExecuteProperties), cancellationToken);
+            file,
+            parameters: null,
+            verb: "properties",
+            name: nameof(ExecuteProperties),
+            parametersFactory: null,
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>

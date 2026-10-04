@@ -1,6 +1,7 @@
 ﻿using Brows.Threading;
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -75,6 +76,78 @@ public sealed class Win32ShellServiceTest {
         Assert.That(
             async () => await service.ExecuteDefault(file, missingExecutable),
             Throws.TypeOf<Win32Exception>());
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task ExecuteDefault_WithExecutable_WhenDocumentPathIsRelative_UsesCallerDirectory() {
+        static string CreateMarkerScript(string markerPath, string markerContents) {
+            var temporaryMarkerPath = markerPath + ".tmp";
+            var escapedMarkerPath = markerPath.Replace("\"", "\"\"");
+            var escapedTemporaryMarkerPath = temporaryMarkerPath.Replace("\"", "\"\"");
+            return "Set fso = CreateObject(\"Scripting.FileSystemObject\")\r\n" +
+                   $"Set marker = fso.CreateTextFile(\"{escapedTemporaryMarkerPath}\", True)\r\n" +
+                   $"marker.Write \"{markerContents}\"\r\n" +
+                   "marker.Close\r\n" +
+                   $"fso.MoveFile \"{escapedTemporaryMarkerPath}\", \"{escapedMarkerPath}\"\r\n";
+        }
+
+        var previousDirectory = Environment.CurrentDirectory;
+        var callerDirectory = Path.Combine(TempDirectory, "caller directory");
+        var executableDirectory = Path.Combine(TempDirectory, "executable directory");
+        Directory.CreateDirectory(callerDirectory);
+        Directory.CreateDirectory(executableDirectory);
+
+        var documentName = "document with spaces.vbs";
+        var markerPath = Path.Combine(TempDirectory, "opened document.txt");
+        var callerDocumentPath = Path.Combine(callerDirectory, documentName);
+        var conflictingDocumentPath = Path.Combine(executableDirectory, documentName);
+        var systemScriptHostPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.System), "wscript.exe");
+        var executablePath = Path.Combine(
+            executableDirectory, $"wscript host {Guid.NewGuid():N}.exe");
+
+        File.WriteAllText(callerDocumentPath, CreateMarkerScript(markerPath, "caller"));
+        File.WriteAllText(conflictingDocumentPath, CreateMarkerScript(markerPath, "executable"));
+        File.Copy(systemScriptHostPath, executablePath);
+
+        using var service = new Win32ShellService(threadPool: null);
+        async Task OpenDocumentAndWait(string documentPath) {
+            var markerCreated = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var markerWatcher = new FileSystemWatcher(TempDirectory, Path.GetFileName(markerPath));
+            markerWatcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite;
+            markerWatcher.Created += (_, _) => markerCreated.TrySetResult(true);
+            markerWatcher.Changed += (_, _) => markerCreated.TrySetResult(true);
+            markerWatcher.Renamed += (_, _) => markerCreated.TrySetResult(true);
+            markerWatcher.EnableRaisingEvents = true;
+
+            await service.ExecuteDefault(documentPath, executablePath);
+
+            var completed = await Task.WhenAny(markerCreated.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+            Assert.That(completed, Is.SameAs(markerCreated.Task), "The child process did not run the document.");
+
+            var childProcesses = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(executablePath));
+            foreach (var childProcess in childProcesses) {
+                using (childProcess) {
+                    var exited = await Task.Run(() => childProcess.WaitForExit(15_000));
+                    Assert.That(exited, Is.True, "The child process did not exit.");
+                }
+            }
+        }
+
+        try {
+            Environment.CurrentDirectory = callerDirectory;
+            await OpenDocumentAndWait(documentName);
+            Assert.That(File.ReadAllText(markerPath), Is.EqualTo("caller"));
+
+            File.Delete(markerPath);
+            await OpenDocumentAndWait(callerDocumentPath);
+        }
+        finally {
+            Environment.CurrentDirectory = previousDirectory;
+        }
+
+        Assert.That(File.ReadAllText(markerPath), Is.EqualTo("caller"));
     }
 
     [Test]

@@ -345,27 +345,42 @@ See the [Shell.NameSpace path contract][shell-namespace].
 work, then use its full directory and filename for `NameSpace` and `ParseName`. Add regression coverage for a
 bare filename and a path containing a relative directory, alongside the existing absolute-path test.
 
-### 22. [P2] Opening a relative document with an executable uses the wrong directory
+### 22. [P2] Opening a relative document with an executable uses the wrong directory — Resolved
 
-**Status: Open. Added during the final review.**
+**Status: Resolved. Added during the final review.**
 
 **Location:**
-[Win32ShellService.cs:98–100](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L98),
+[Win32ShellService.cs:109](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L109),
 [28–30](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L28).
 
-`ExecuteDefault(file, with)` quotes the supplied document path unchanged, while `Execute` sets `lpDirectory` to
-the executable's parent directory. If `file` is relative and the executable lives elsewhere, the child resolves
-the argument against the executable's directory instead of the caller's directory. It can fail to open an
-existing document or open a different document with the same name.
+Before the fix, `ExecuteDefault(file, with)` quoted the supplied document path unchanged, while `Execute` set
+`lpDirectory` to the executable's parent directory. If `file` was relative and the executable lived elsewhere,
+the child resolved the argument against the executable's directory instead of the caller's directory. It could
+fail to open an existing document or open a different document with the same name.
 
-**Reproduced:** A test executable launched with `ExecuteDefault("document.txt", absoluteExecutablePath)` received
-`document.txt` and ran in its own output directory. It reported `File.Exists(args[0]) == false`, although the
-document existed in the caller's current directory. The probe ran on .NET 10 x64. The documented
+**Reproduced before the fix:** A child executable launched with `ExecuteDefault("document.txt", absoluteExecutablePath)`
+received `document.txt` and ran in its own output directory. It reported `File.Exists(args[0]) == false`, although
+the document existed in the caller's current directory. The probe ran on .NET 10 x64. The documented
 [SHELLEXECUTEINFOW working-directory behavior][shell-execute-info] matches this observation.
 
-**Fix:** Resolve a relative filesystem document path against the caller's current directory before dispatching
-and quoting the argument. Add a regression test with the document and executable in different directories,
-including a same-named document in the executable's directory to verify that the intended file is selected.
+**Resolution:** The `with` overload now resolves the document path against the caller's current directory and
+quotes that full path before it queues STA work. The executable argument and the other Shell overloads retain
+their existing behavior. Operation disposal and cancellation checks run before path resolution.
+
+**Regression coverage:** `ExecuteDefault_WithExecutable_WhenDocumentPathIsRelative_UsesCallerDirectory` launches
+a copied Windows Script Host from a temporary executable directory and places same-named scripts in that
+directory and the caller directory. The caller and executable paths and the document name contain spaces. The
+test confirms the caller's script ran for both relative and absolute document arguments and waits for a bounded
+child-process signal before cleanup. Before the fix, the test failed because the executable-directory script
+wrote `executable`; after the fix it passed.
+
+**Branch verification:** The core test project built successfully for `net462`, `net48`, `net8.0-windows`, and
+`net10.0-windows`. All 17 tests passed on each target framework (68 total). The build emitted only the two
+existing `CS8981` warnings for lowercase native type names.
+
+**Squash-merge verification:** Restore and the Release solution build succeeded on all four target frameworks.
+The focused regression passed, followed by all 20 core tests and 16 Operations tests on each target framework
+(144 executions total), with no failures or skips. Only existing `CS8981` warnings were emitted.
 
 ## Verification and limits
 
