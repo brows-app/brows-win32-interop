@@ -270,9 +270,9 @@ Before the fix, the first value also had the wrong severity bits: it represented
 **Fix applied:** Both enum values now match Windows SDK 10.0.26100.0. The final comparison of all 1,784 matching
 named NTSTATUS constants found zero numeric mismatches.
 
-### 17. [P2] A failed package push can be hidden by a later successful push
+### 17. [P2] A failed package push can be hidden by a later successful push — Resolved
 
-**Status: Open.**
+**Status: Resolved.**
 
 **Location:** [workflow.yml:81–83](.github/workflows/workflow.yml#L81).
 
@@ -280,10 +280,12 @@ The publishing loop does not check each `dotnet nuget push` exit code. With norm
 
 **Evidence:** Code inspection plus GitHub's documented PowerShell wrapper, which propagates the final native exit code. No packages were published during this review.
 
-**Final verification:** The loop still has no per-push exit-code check. A harmless PowerShell simulation with two
-native commands exiting 1 and then 0 left `$LASTEXITCODE` equal to 0, with native-command error propagation disabled.
+**Reproduction:** A harmless PowerShell simulation with two native commands exiting 1 and then 0 left
+`$LASTEXITCODE` equal to 0, with native-command error propagation disabled.
 
-**Fix:** Check `$LASTEXITCODE` immediately after each push and throw on failure, or explicitly enable native-command failure propagation. See [GitHub Actions shell exit-code behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#exit-codes-and-error-action-preference).
+**Resolution:** The publishing loop now checks `$LASTEXITCODE` immediately after each `dotnet nuget push` and
+throws with the package path and exit code when a push fails. This makes the step fail at the first unsuccessful
+push. See [GitHub Actions shell exit-code behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#exit-codes-and-error-action-preference).
 
 ### 18. [P2] The solution's test step exercises no implementation
 
