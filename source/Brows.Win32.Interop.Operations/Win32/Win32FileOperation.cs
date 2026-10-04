@@ -16,7 +16,7 @@ namespace Brows.Win32;
 /// <summary>
 /// Queues a batch of Windows Shell file operations for execution on an STA worker.
 /// </summary>
-public sealed class Win32FileOperation {
+internal sealed class Win32FileOperation : IWin32FileOperation {
     private static readonly ILog Log = Logging.For(typeof(Win32FileOperation));
 
     private uint Flags;
@@ -26,27 +26,6 @@ public sealed class Win32FileOperation {
 
     private ShellItemWrapper DirectoryWrap => _DirectoryWrap ??= new ShellItemWrapper(Directory);
     private ShellItemWrapper _DirectoryWrap;
-
-    /// <summary>
-    /// Combines the current operation options into native Shell operation flags.
-    /// </summary>
-    /// <returns>The flags to pass to the Windows Shell file operation.</returns>
-    public uint FlagsInit() {
-        var fof = FOF.NOCONFIRMMKDIR;
-        if (NoConfirmation) fof |= FOF.NOCONFIRMATION;
-        if (NoErrorUI) fof |= FOF.NOERRORUI;
-        if (Silent) fof |= FOF.SILENT;
-        if (AllowUndo) fof |= FOF.ALLOWUNDO;
-        if (RenameOnCollision) fof |= FOF.RENAMEONCOLLISION;
-
-        var fofx = FOFX.SHOWELEVATIONPROMPT;
-        if (EarlyFailure) fofx |= FOFX.EARLYFAILURE;
-        if (AddUndoRecord) fofx |= FOFX.ADDUNDORECORD;
-        if (RecycleOnDelete) fofx |= FOFX.RECYCLEONDELETE;
-        if (PreserveFileExtensions) fofx |= FOFX.PRESERVEFILEEXTENSIONS;
-
-        return (uint)fof | (uint)fofx;
-    }
 
     private bool Iterate<T>(IReadOnlyList<T> list, Action<T> act) {
         if (list == null) return false;
@@ -180,6 +159,23 @@ public sealed class Win32FileOperation {
                 }
             });
         }
+    }
+
+    internal uint FlagsInit() {
+        var fof = FOF.NOCONFIRMMKDIR;
+        if (NoConfirmation) fof |= FOF.NOCONFIRMATION;
+        if (NoErrorUI) fof |= FOF.NOERRORUI;
+        if (Silent) fof |= FOF.SILENT;
+        if (AllowUndo) fof |= FOF.ALLOWUNDO;
+        if (RenameOnCollision) fof |= FOF.RENAMEONCOLLISION;
+
+        var fofx = FOFX.SHOWELEVATIONPROMPT;
+        if (EarlyFailure) fofx |= FOFX.EARLYFAILURE;
+        if (AddUndoRecord) fofx |= FOFX.ADDUNDORECORD;
+        if (RecycleOnDelete) fofx |= FOFX.RECYCLEONDELETE;
+        if (PreserveFileExtensions) fofx |= FOFX.PRESERVEFILEEXTENSIONS;
+
+        return (uint)fof | (uint)fofx;
     }
 
     /// <summary>

@@ -4,6 +4,7 @@
     <File Path=".github/workflows/workflow.yml" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Brows.Win32.Interop.Composition.Tests/Brows.Win32.Interop.Composition.Tests.csproj" Id="8811aa89-1a59-4555-bf31-b2cbd8b0ebfa" />
     <Project Path="tests/Brows.Win32.Interop.Operations.Tests/Brows.Win32.Interop.Operations.Tests.csproj" Id="acdc714e-532c-4807-8a82-fbbb754b58b9" />
     <Project Path="tests/Brows.Win32.Interop.Tests/Brows.Win32.Interop.Tests.csproj" Id="3802a386-74c2-4b22-8b21-e2f18f2417ab" />
   </Folder>
@@ -28,6 +29,7 @@
   <Folder Name="/_/tests/">
     <File Path="tests/Directory.Build.props" />
   </Folder>
+  <Project Path="source/Brows.Win32.Interop.Composition/Brows.Win32.Interop.Composition.csproj" Id="802bd073-00a8-4330-b335-6fc63166f35b" />
   <Project Path="source/Brows.Win32.Interop.Operations/Brows.Win32.Interop.Operations.csproj" Id="5bd4c986-5a35-41c1-b140-df197887d011" />
   <Project Path="source/Brows.Win32.Interop/Brows.Win32.Interop.csproj" Id="ef01d5ea-1bb1-4488-9461-c854376be6d0" />
 </Solution>
