@@ -73,6 +73,8 @@ Use `--no-build` only when the binaries include the latest code changes.
   Use PascalCase for types and members and an `I` prefix for interfaces.
 - Never prefix type names with their namespace. Always use `using` statements
   to import namespaced types.
+- Method parameters of type `CancellationToken` must always come last in the
+  parameter list. Pass `CancellationToken` arguments last when calling methods.
 - Use the configured C# language version. APIs must be available on every
   framework targeted by the affected project. Preserve framework-specific
   conditions and compatibility shims; a newer language version does not supply

@@ -1,8 +1,18 @@
 # Solution code review
 
-Initial review completed on 2026-10-02. A status follow-up on 2026-10-03 checked findings #3 and #17–20. The initial scope covered all 46 C# source files, both libraries, both test projects, build/package settings, and the release workflow, with particular attention to native signatures, COM vtable order, HRESULT handling, apartment use, cancellation, and resource lifetime.
+Initial review completed on 2026-10-02. The final review on 2026-10-03 checked every existing finding and all
+49 current C# source files, all 11 test files, both libraries, build/package settings, and the release workflow.
+It covered native signatures, COM vtable order, HRESULT handling, apartment use, cancellation, resource lifetime,
+and path handling.
 
-There are **20 numbered findings** below. The Boolean returned by `Work` and `Operate` means that some work was done, whether or not it succeeded; returning `true` after the invalid-name probe is expected under that contract, so it is not a finding. P1 means high priority, P2 means medium priority, and P3 means low priority. Findings distinguish reproduced behavior, defects established by code inspection, and platform/API contract limitations. Findings #1–16 and #18–20 are marked fixed or resolved below; finding #17 remains open.
+There are **22 numbered findings** below. Findings **#1–16 and #18–20 remain fixed or resolved**;
+**#17 remains open**, and the final review added **#21 and #22**, both open. No production code was changed
+during this review.
+
+The Boolean returned by `Work` and `Operate` indicates that work was queued for native execution, rather than
+success for every item; returning `true` after the invalid-name probe is expected under that contract.
+P1 means high priority, P2 means medium priority, and P3 means low priority. Findings distinguish reproduced
+behavior, defects established by code inspection, and platform/API contract limitations.
 
 ## Findings
 
@@ -22,19 +32,31 @@ Before the fix, casting `ERROR_CANCELLED` directly to `HRESULT` returned `0x0000
 
 **Status: Fixed.**
 
-**Location:** [Win32FileOperation.cs:124–174](source/Brows.Win32.Interop.Operations/Win32/Win32FileOperation.cs#L124), [Win32ProgressSink.cs:21–39](source/Brows.Win32.Interop.Operations/Win32/Win32ProgressSink.cs#L21).
+**Location:**
+[Win32FileOperation.cs:131–179](source/Brows.Win32.Interop.Operations/Win32/Win32FileOperation.cs#L131),
+[Win32ProgressSink.cs:21–39](source/Brows.Win32.Interop.Operations/Win32/Win32ProgressSink.cs#L21).
 
 Before the fix, the progress sink was advised only when `Silent` was true. With the default `Silent = false`, the cancellation token was never checked by `Work()` or any callback. The supplied `STAThreadPool` token only cancels work before dispatch; its synchronous callback cannot be interrupted after it starts. Canceling the library token during a copy, move, or delete therefore did not stop the native operation in the default mode.
 
 **Evidence before the fix:** The conditional registration and absence of token checks were established by inspection; the installed `Brows.Win32.STAThreadPool` 1.2.2 README explicitly documents that a token does not interrupt an already started synchronous callback.
 
-**Fix applied:** The cancellation sink is advised in both modes. The worker checks the token before and during queueing, immediately before `PerformOperations`, and after native execution. The sink checks it at operation start, before each item, and in progress callbacks. The sink is unadvised on completion or failure. The default mode continues using native progress UI, so its managed progress argument is still unused. Built the Operations project in Release for all four target frameworks: zero errors; existing documentation and SourceLink warnings remain. Native cancellation after a copy has started was not reproduced after this change.
+**Fix applied:** The cancellation sink is advised in both modes. The worker checks the token before and during
+queueing, immediately before `PerformOperations`, and after native execution. The sink checks it at operation
+start, before each item, and in progress callbacks. The sink is unadvised on completion or failure. The default
+mode continues using native progress UI, so its managed progress argument is still unused.
+
+**Final verification:** Canceling after the destination was created during a 512 MiB silent native copy propagated
+`OperationCanceledException`, stopped that copy, and prevented the next queued file from being copied. Callback
+probes on x64 and x86 returned `0x800704C7`. The default mode's use of the same sink was checked by inspection;
+an interactive native-progress-UI cancellation probe was not performed.
 
 ### 3. [P1] Progress updates violate the dependency's UI context requirement
 
 **Status: Resolved by upgrading `Brows.Operations` to 1.2.0.**
 
-**Location:** [Win32ProgressSink.cs:38](source/Brows.Win32.Interop.Operations/Win32/Win32ProgressSink.cs#L38), [Win32FileOperation.cs:156,245–248](source/Brows.Win32.Interop.Operations/Win32/Win32FileOperation.cs#L156).
+**Location:**
+[Win32ProgressSink.cs:38](source/Brows.Win32.Interop.Operations/Win32/Win32ProgressSink.cs#L38),
+[Win32FileOperation.cs:156–159](source/Brows.Win32.Interop.Operations/Win32/Win32FileOperation.cs#L156).
 
 Before the dependency update, silent-mode `UpdateProgress` ran during `PerformOperations` on an STA worker and called `IOperationProgress.Change` there, while `Brows.Operations` 1.1.0 required calls on the operation's UI synchronization context. An STA worker is not necessarily that context.
 
@@ -42,77 +64,105 @@ Before the dependency update, silent-mode `UpdateProgress` ran during `PerformOp
 
 **Resolution:** `Directory.Packages.props` now selects `Brows.Operations` 1.2.0. The existing direct call from `Win32ProgressSink` is supported by the updated contract, so this repository does not need its own synchronization-context adapter. Progress notifications may be asynchronous and coalesced as documented by the dependency.
 
+**Final verification:** The dependency source at the commit recorded in the installed package was also checked.
+Its progress wrapper routes `Change` through `OperationContext.Report`, which posts off-context reports before
+applying state changes. The any-thread contract is backed by the implementation.
+
 ### 4. [P2] Public service methods bypass all disposal coordination
 
 **Status: Fixed.**
 
-**Location:** [Win32BaseService.cs:23–39](source/Brows.Win32.Interop/Win32/Win32BaseService.cs#L23), [Win32KernelService.cs:32,102](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L32), [Win32ShellService.cs:55–93](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L55).
+**Location:**
+[Win32BaseService.cs:23–39](source/Brows.Win32.Interop/Win32/Win32BaseService.cs#L23),
+[Win32KernelService.cs:101–123](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L101),
+[Win32ShellService.cs:40–55](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L40),
+[120–127](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L120).
 
 Before the fix, public service methods never called `BeginOperation` or `EndOperation`. `ActiveOperations` stayed zero, so disposal could not wait for active operations or prevent subsequent service calls as its public documentation promises. An owned Shell pool could be emptied while service work was pending, and subsequent calls could create workers again.
 
 **Reproduced before the fix:** `Win32KernelService.PathsAreEquivalent` returned `true` after the service was disposed. Inspection confirmed that Shell methods had the same missing guard. The pool's `Empty()` requests worker exit without synchronously joining active work.
 
-**Fix applied:** Every public operation now pairs `BeginOperation` with `EndOperation` in a `finally` block. The asynchronous link lookup remains tracked until its awaited work completes. No tests or build were run for this change.
+**Fix applied:** Every public operation now pairs `BeginOperation` with `EndOperation` in a `finally` block.
+The asynchronous link lookup remains tracked until its awaited work completes. Final x64 and x86 probes confirmed
+that disposal waits for active work; the committed tests also verify rejection of calls after disposal.
 
 ### 5. [P2] Repeated disposal runs cleanup again
 
 **Status: Fixed.**
 
-**Location:** [Win32BaseService.cs:53–75](source/Brows.Win32.Interop/Win32/Win32BaseService.cs#L53).
+**Location:** [Win32BaseService.cs:53–79](source/Brows.Win32.Interop/Win32/Win32BaseService.cs#L53).
 
 Before the fix, the disposal method checked `Disposing` but did not check `Disposed` before starting cleanup. After the first call finished, a second call set `Disposing` again and executed `DisposeCore` again. An owned Shell pool was emptied repeatedly. During a repeated cleanup, another concurrent disposer could also return immediately because `Disposed` remained true from the first cleanup.
 
 **Evidence:** Direct control-flow inspection of the two flags and the cleanup call; this does not depend on a native failure.
 
-**Fix applied:** Disposal now returns immediately when the service is already disposed. Concurrent callers wait while `Disposing` is true, so the stale `Disposed` value from an earlier cleanup cannot let them return before the current cleanup completes. No tests or build were run for this change.
+**Fix applied:** Disposal now returns immediately when the service is already disposed. Concurrent callers wait
+while `Disposing` is true. Final x64 and x86 probes ran two concurrent disposers while work was active and confirmed
+that both completed after the work was released, with exactly one cleanup call. Repeated disposal tests pass.
 
 ### 6. [P2] Path equivalence cannot compare directories
 
 **Status: Fixed.**
 
-**Location:** [Win32KernelService.cs:30–45](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L30).
+**Location:** [Win32KernelService.cs:33–48](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L33).
 
 Before the fix, both `CreateFileW` calls used zero flags. Windows requires `FILE_FLAG_BACKUP_SEMANTICS` to open directory handles. The public method accepts paths without restricting them to ordinary files, but even comparing a directory with itself threw instead of returning true.
 
 **Reproduced:** Comparing the fixture directory to itself threw `Win32Exception` with “Access is denied” in x64 and x86.
 
-**Fix applied:** Both `CreateFileW` calls now include `FILE_FLAG_BACKUP_SEMANTICS`, allowing directory handles to be opened for the identity comparison. See [CreateFileW directory requirements](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew). No tests or build were run for this change.
+**Fix applied:** Both `CreateFileW` calls now include `FILE_FLAG_BACKUP_SEMANTICS`, allowing directory handles to be
+opened for the identity comparison. See [CreateFileW directory requirements][create-file]. Final x64 and x86
+probes returned `true` for a directory compared with itself; the corresponding committed test passes on all
+four target frameworks.
 
 ### 7. [P2] Metadata queries reject existing handles with delete access
 
 **Status: Fixed.**
 
-**Location:** [Win32KernelService.cs:32,42,94](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L32).
+**Location:**
+[Win32KernelService.cs:35,45](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L35),
+[131](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L131).
 
 Before the fix, all three metadata opens specified `FileShare.ReadWrite` and omitted `FileShare.Delete`. A file or directory already opened with delete access could not be opened with this sharing mask, even when the requested metadata was available. This broke identity and case-sensitivity queries around common rename/delete-capable handles.
 
 **Reproduced:** Holding a valid `DELETE`-access handle with read/write/delete sharing made `PathsAreEquivalent(file, file)` fail with a sharing violation.
 
-**Fix applied:** All three inspection handles now allow read, write, and delete sharing. See the [CreateFileW sharing rules](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew). No tests or build were run for this change.
+**Fix applied:** All three inspection handles now allow read, write, and delete sharing. See the
+[CreateFileW sharing rules][create-file]. Final x64 and x86 probes held a valid `DELETE`-access handle and
+successfully compared the file with itself.
 
 ### 8. [P2] File identity checks unnecessarily request file data access
 
 **Status: Fixed.**
 
-**Location:** [Win32KernelService.cs:31,41](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L31), [kernel32.cs:47–54](source/Brows.Win32.Interop/Win32/PlatformInvoke/kernel32.cs#L47).
+**Location:**
+[Win32KernelService.cs:33–44](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L33),
+[kernel32.cs:47–54](source/Brows.Win32.Interop/Win32/PlatformInvoke/kernel32.cs#L47).
 
 Before the fix, `FileAccess.Read` was passed directly as a native access mask. Its numeric value is `1`, which is `FILE_READ_DATA`, rather than the .NET meaning of an abstract read mode. File identity inspection does not need permission to read file contents. The extra access caused avoidable sharing and permission failures.
 
 **Reproduced:** With an exclusive writer open, a metadata-only `CreateFileW` call succeeded, while `PathsAreEquivalent` threw a sharing violation.
 
-**Fix applied:** The identity handles now request zero access, which is sufficient for the metadata query, and `CreateFileW` accepts a raw native `uint` access mask rather than `System.IO.FileAccess`. This avoids interpreting .NET's `FileAccess.Read` value as `FILE_READ_DATA`. See [CreateFileW metadata access](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew). No tests or build were run for this change.
+**Fix applied:** The identity handles now request zero access, which is sufficient for the metadata query, and
+`CreateFileW` accepts a raw native `uint` access mask rather than `System.IO.FileAccess`. This avoids interpreting
+.NET's `FileAccess.Read` value as `FILE_READ_DATA`. See [CreateFileW metadata access][create-file]. Final x64 and
+x86 probes successfully compared a file with itself while an exclusive writer held it open.
 
 ### 9. [P2] File identity comparison can falsely equate different ReFS files
 
 **Status: Fixed.**
 
-**Location:** [Win32KernelService.cs:50–68](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L50).
+**Location:** [Win32KernelService.cs:53–87](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L53).
 
 Before the fix, the method compared only the volume serial number and the legacy 64-bit file index from `BY_HANDLE_FILE_INFORMATION`. Microsoft explicitly states that this 64-bit identifier is not guaranteed unique on ReFS, which uses 128-bit file identifiers. The method could therefore report that distinct ReFS files were equivalent.
 
 **Evidence:** A documented filesystem limitation, not a collision reproduced on this machine.
 
-**Fix applied:** The method now compares the volume serial and full 128-bit file ID from `GetFileInformationByHandleEx(FileIdInfo)`. If that query fails, it uses the legacy 64-bit identifier only when both handles are confirmed to be on NTFS. See [FILE_ID_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info) and [BY_HANDLE_FILE_INFORMATION](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information). No tests or build were run for this change.
+**Fix applied:** The method now compares the volume serial and full 128-bit file ID from
+`GetFileInformationByHandleEx(FileIdInfo)`. If that query fails, it uses the legacy 64-bit identifier only when
+both handles are confirmed to be on NTFS. See [FILE_ID_INFO][file-id-info] and
+[BY_HANDLE_FILE_INFORMATION][legacy-file-info]. Final review confirmed the full-width comparison and restricted
+fallback; no ReFS collision was reproduced.
 
 ### 10. [P2] IO_STATUS_BLOCK has the wrong layout in a 32-bit process
 
@@ -126,37 +176,48 @@ Before the fix, the managed declaration used a 32-bit status followed by `ulong`
 
 **Impact limit:** The current case-sensitivity method does not read `Information`, so this defect does not by itself demonstrate a wrong case-sensitivity result or a memory overwrite outside the supplied structure. It is nevertheless an incorrect native output contract.
 
-**Fix applied:** The status union and `Information` now use pointer-sized `IntPtr` and `UIntPtr` fields, matching the native layout on x86 and x64. The current call site does not read the status field. See the [native IO_STATUS_BLOCK definition](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_io_status_block). No tests or build were run for this change.
+**Fix applied:** The status union and `Information` now use pointer-sized `IntPtr` and `UIntPtr` fields, matching
+the native layout on x86 and x64. The current call site does not read the status field. See the
+[native IO_STATUS_BLOCK definition][io-status-block]. Final probes returned size 8 and offset 4 on x86, and
+size 16 and offset 8 on x64.
 
 ### 11. [P2] Case-sensitivity query failures are silently reported as false
 
 **Status: Fixed.**
 
-**Location:** [Win32KernelService.cs:112–146](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L112).
+**Location:** [Win32KernelService.cs:125–158](source/Brows.Win32.Interop/Win32/Win32KernelService.cs#L125).
 
 Before the fix, the switch returned false for every unrecognized NTSTATUS, including genuine access or I/O failures. An unsuccessful query was therefore indistinguishable from a directory explicitly configured as case insensitive. Callers that use this result to compare names could incorrectly collapse distinct case-sensitive entries.
 
 Before the fix, the handle was opened with access zero, while Microsoft's contract for `FileCaseSensitiveInformation` specifies `FILE_READ_ATTRIBUTES`. Both access zero and explicit read-attributes access succeeded on this machine; a universal failure from access zero is **not** claimed here.
 
-**Fix applied:** The handle now requests `FILE_READ_ATTRIBUTES`. Only `STATUS_NOT_IMPLEMENTED`, `STATUS_NOT_SUPPORTED`, and `STATUS_INVALID_INFO_CLASS` return the compatibility fallback value `false`; other statuses throw `IOException` with the NTSTATUS value. See [NtQueryInformationFile](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntqueryinformationfile). No tests or build were run for this change.
+**Fix applied:** The handle now requests `FILE_READ_ATTRIBUTES`. Only `STATUS_NOT_IMPLEMENTED`,
+`STATUS_NOT_SUPPORTED`, and `STATUS_INVALID_INFO_CLASS` return the compatibility fallback value `false`;
+other statuses throw `IOException` with the NTSTATUS value. See [NtQueryInformationFile][nt-query-info].
+Final review confirmed the access mask and status switch; the committed case-sensitivity tests pass on all
+four target frameworks. Unexpected native failures were not injected.
 
 ### 12. [P2] Shortcut resolution swallows cancellation after entry
 
 **Status: Fixed.**
 
-**Location:** [Win32ShellService.cs:81–126](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L81).
+**Location:** [Win32ShellService.cs:132–164](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L132).
 
 Before the fix, a token canceled before entry threw, but cancellation while awaiting `ThreadPool.Work` was caught by `catch (Exception)` and converted to null. The same operation had inconsistent cancellation semantics depending on timing, and callers could not distinguish cancellation from a missing shortcut target.
 
 **Reproduced before the fix:** Occupying a pool's only worker, queuing `GetLinkPath`, and then canceling its token produced null with task state `RanToCompletion`.
 
-**Fix applied:** `GetLinkPath` now rethrows `OperationCanceledException` when its cancellation token has been canceled; other failures retain the existing logged `null` result. No tests or build were run for this change.
+**Fix applied:** `GetLinkPath` now rethrows `OperationCanceledException` when its cancellation token has been
+canceled; other failures retain the existing logged `null` result. Final x64 and x86 probes occupied the only
+worker, queued a valid shortcut lookup, and canceled it. Both propagated `OperationCanceledException`.
 
 ### 13. [P2] Shell execution bypasses the STA pool and COM initialization
 
 **Status: Fixed.**
 
-**Location:** [Win32ShellService.cs:18–48](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L18), [public execution methods:69–79](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L69).
+**Location:**
+[Win32ShellService.cs:21–55](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L21),
+[public execution methods:86–112](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L86).
 
 Before the fix, all three execution methods invoked `ShellExecuteExW` directly on the caller's thread. They performed no COM initialization or apartment check and did not use the service's STA pool. Calling them from an MTA worker or an uninitialized native thread could fail for Shell extensions that require STA COM, even though simple executable launches might succeed.
 
@@ -186,7 +247,10 @@ Before the fix, `10.0.0` was not a valid .NET SDK feature-band version. SDK vers
 
 **Reproduced before the fix:** `dotnet --info` identified this file as invalid and explicitly reported that SDK feature bands start at 1. The installed CLI still selected SDK 10.0.112 and completed the build; this finding was not a claim that the current build failed.
 
-**Fix applied:** The SDK baseline is now `10.0.100`; the existing `feature` roll-forward policy is preserved. Microsoft documents `10.0.100` as a valid SDK version format in [global.json version requirements](https://learn.microsoft.com/en-us/dotnet/core/tools/global-json). No build or tests were run for this change.
+**Fix applied:** The SDK baseline is now `10.0.100`; the existing `feature` roll-forward policy is preserved.
+Microsoft documents `10.0.100` as a valid SDK version format in
+[global.json version requirements](https://learn.microsoft.com/en-us/dotnet/core/tools/global-json).
+Final restore, build, tests, and pack succeeded with the selected SDK 10.0.112.
 
 ### 16. [P3] Two NTSTATUS constants have incorrect numeric values
 
@@ -203,7 +267,8 @@ Before the fix, the first value also had the wrong severity bits: it represented
 
 **Verified:** Compared 1,784 named constants present in both the enum and Windows SDK 10.0.26100.0 `shared/ntstatus.h`; these were the two numeric mismatches. Neither member is used by the current case-sensitivity query, so no current public-method failure is attributed to them.
 
-**Fix applied:** Both enum values now match Windows SDK 10.0.26100.0. No tests or build were run for this change.
+**Fix applied:** Both enum values now match Windows SDK 10.0.26100.0. The final comparison of all 1,784 matching
+named NTSTATUS constants found zero numeric mismatches.
 
 ### 17. [P2] A failed package push can be hidden by a later successful push
 
@@ -214,6 +279,9 @@ Before the fix, the first value also had the wrong severity bits: it represented
 The publishing loop does not check each `dotnet nuget push` exit code. With normal PowerShell native-command error behavior, failure to publish the first package followed by successful publication of the second leaves a zero final exit code. The step can appear successful despite a partial release. Fixing finding 14 makes this path reachable.
 
 **Evidence:** Code inspection plus GitHub's documented PowerShell wrapper, which propagates the final native exit code. No packages were published during this review.
+
+**Final verification:** The loop still has no per-push exit-code check. A harmless PowerShell simulation with two
+native commands exiting 1 and then 0 left `$LASTEXITCODE` equal to 0, with native-command error propagation disabled.
 
 **Fix:** Check `$LASTEXITCODE` immediately after each push and throw on failure, or explicitly enable native-command failure propagation. See [GitHub Actions shell exit-code behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#exit-codes-and-error-action-preference).
 
@@ -251,14 +319,94 @@ The original full-build warnings were documentation defects, not evidence of inc
 
 The package project link now identifies the correct repository.
 
+### 21. [P2] Shortcut lookup fails for a filename relative to the current directory
+
+**Status: Open. Added during the final review.**
+
+**Location:**
+[Win32ShellService.cs:144–147](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L144).
+
+`GetLinkPath("document.lnk", token)` passes `Path.GetDirectoryName(file)`, an empty string for this input, to
+`Shell.NameSpace`. The Shell returns no folder, so the method returns `null` even when that shortcut exists in
+the current directory and has a valid target. The public API does not restrict the shortcut path to absolute paths.
+
+**Reproduced:** In .NET 10 x64 and .NET Framework 4.6.2 x86, a valid shortcut resolved to its target when passed
+by absolute path, but the same shortcut returned `null` when passed as `document.lnk` from its containing directory.
+See the [Shell.NameSpace path contract][shell-namespace].
+
+**Fix:** Resolve a relative filesystem shortcut path against the caller's current directory before dispatching
+work, then use its full directory and filename for `NameSpace` and `ParseName`. Add regression coverage for a
+bare filename and a path containing a relative directory, alongside the existing absolute-path test.
+
+### 22. [P2] Opening a relative document with an executable uses the wrong directory
+
+**Status: Open. Added during the final review.**
+
+**Location:**
+[Win32ShellService.cs:98–100](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L98),
+[28–30](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L28).
+
+`ExecuteDefault(file, with)` quotes the supplied document path unchanged, while `Execute` sets `lpDirectory` to
+the executable's parent directory. If `file` is relative and the executable lives elsewhere, the child resolves
+the argument against the executable's directory instead of the caller's directory. It can fail to open an
+existing document or open a different document with the same name.
+
+**Reproduced:** A test executable launched with `ExecuteDefault("document.txt", absoluteExecutablePath)` received
+`document.txt` and ran in its own output directory. It reported `File.Exists(args[0]) == false`, although the
+document existed in the caller's current directory. The probe ran on .NET 10 x64. The documented
+[SHELLEXECUTEINFOW working-directory behavior][shell-execute-info] matches this observation.
+
+**Fix:** Resolve a relative filesystem document path against the caller's current directory before dispatching
+and quoting the argument. Add a regression test with the document and executable in different directories,
+including a same-named document in the executable's directory to verify that the intended file is selected.
+
 ## Verification and limits
 
-- Initial full build: both libraries and both test projects built in Release for `net462`, `net48`, `net8.0-windows`, and `net10.0-windows` with **zero errors** and 212 warnings, including documentation and local SourceLink warnings.
-- Initial test run completed successfully but executed **no test cases**. In the 2026-10-03 follow-up, the solution test command discovered and passed 16 cases per test project for all four target frameworks.
-- Follow-up Release build of the Interop project succeeded for all four target frameworks with **zero errors** and no `CS1570` warnings; four unrelated `CS8981` lowercase-name warnings remain.
-- Ran disposable Win32/COM probes against workspace fixtures in .NET 10 x64 and x86 before the callback fix. Confirmed findings 4, 6, 7, 8, 10, and 12 through the observations above. The updated HRESULT conversion was compile-checked after the fix.
-- Verified that `IFileOperationProgressSink` marshals and `IFileOperation.Advise` returns `S_OK` despite the internal types and assembly-level `ComVisible(false)`. Those visibility attributes are **not** reported as a defect.
-- Verified successful Shell shortcut resolution and successful silent file creation. Compared `IFileOperation` and `IFileOperationProgressSink` GUIDs, method order, parameter widths, Unicode strings, and BOOL output against the installed SDK. No vtable-order mismatch was found in these declarations. Releasing a queued source item's managed wrapper before `PerformOperations` is not itself a finding: COM retains the native references needed by the queued operation.
-- Checked native structures and constants against Windows SDK 10.0.26100.0 and consulted the linked Microsoft API contracts. ReFS collisions, older Windows behavior, third-party Shell extensions, and every possible UI scheduling interaction were not reproduced. Findings relying on those contracts are labeled accordingly.
+Final validation on 2026-10-03 used the selected SDK 10.0.112 and the following solution commands:
 
-Build/test/probe artifacts were temporary. The review does not claim that compilation or these probes establish correctness for every filesystem, Shell extension, Windows version, or COM implementation.
+```powershell
+dotnet restore brows-win32-interop.slnx
+dotnet build brows-win32-interop.slnx --no-restore --configuration Release --verbosity minimal
+dotnet test brows-win32-interop.slnx --no-restore --configuration Release --no-build --verbosity minimal
+dotnet pack brows-win32-interop.slnx --no-restore --configuration Release --no-build --verbosity minimal
+```
+
+- Restore succeeded for all four projects. Both libraries and both test projects built in Release for `net462`,
+  `net48`, `net8.0-windows`, and `net10.0-windows`: **zero errors**, four `CS8981` warnings for the lowercase
+  `ntdll` and `winerror` names, and no `CS1570` warnings.
+- Tests discovered and passed **16 cases per test project per target framework: 128 executions total**,
+  with no failures or skips. These tests exercise implementation code but do not cover the new relative-path bugs.
+- Pack succeeded for both libraries. Each `.nupkg` contains a nonempty root `README.md` and all four target assets;
+  both symbol packages were also produced. No packages were published.
+- Isolated probes on .NET 10 x64 and .NET Framework 4.6.2 x86 confirmed directory identity, metadata access with
+  an exclusive writer and a delete-access handle, disposal waiting for active work, exactly one concurrent cleanup,
+  cancellation HRESULTs, and cancellation of a queued shortcut lookup. They also reproduced finding #21.
+- A .NET 10 x64 native copy probe canceled after the destination was created, observed propagated cancellation,
+  and confirmed that the next queued file was not copied. A separate child-executable probe reproduced finding #22.
+- Structure probes confirmed `IO_STATUS_BLOCK` size/Information offset of 16/8 on x64 and 8/4 on x86,
+  `FILE_ID_INFO` size 24 on both, and `SHELLEXECUTEINFOW` sizes 112 and 60 respectively.
+- Compared **1,784 named NTSTATUS values and 91 other native constants** against Windows SDK 10.0.26100.0;
+  no numeric mismatches remain. Reviewed native signatures and COM method order; no additional mismatch was found.
+- Checked the `Brows.Operations` 1.2.0 threading contract in all four package assets and the corresponding source
+  implementation. The upgrade satisfactorily resolves finding #3.
+- Rechecked the release workflow and safely simulated an earlier native failure followed by success;
+  finding #17 remains open.
+
+The initial review's build produced 212 warnings and its test run executed no cases; those are historical results.
+The final build and tests above supersede them. Earlier COM probes also confirmed successful `Advise` despite
+internal types and assembly-level `ComVisible(false)`, successful shortcut resolution, and silent file creation.
+COM retains the native references needed by queued operations after source wrappers are released; this is not
+reported as a lifetime defect.
+
+ReFS collisions, older Windows behavior, unexpected native case-query failures, third-party Shell extensions,
+and interactive progress-UI scheduling were not reproduced. Related fixes were checked against code and API
+contracts, with these limits retained. Build, package, and isolated-probe artifacts remain under ignored `out/`.
+Passing compilation and these checks do not establish correctness for every filesystem or Shell implementation.
+
+[shell-namespace]: https://learn.microsoft.com/en-us/windows/win32/shell/shell-namespace
+[shell-execute-info]: https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ns-shellapi-shellexecuteinfow
+[create-file]: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
+[file-id-info]: https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info
+[legacy-file-info]: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information
+[io-status-block]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_io_status_block
+[nt-query-info]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntqueryinformationfile
