@@ -46,8 +46,8 @@ public sealed class Win32ShellService : Win32BaseService {
         try {
             var work = ThreadPool.Work(
                 name: name,
-                cancellationToken: cancellationToken,
-                work: () => Execute(file, parameters, verb));
+                work: () => Execute(file, parameters, verb),
+                cancellationToken: cancellationToken);
             await work.ConfigureAwait(false);
         }
         finally {
@@ -134,10 +134,9 @@ public sealed class Win32ShellService : Win32BaseService {
                 return null;
             }
             try {
-                string shortcutPath = Path.GetFullPath(file);
+                var shortcutPath = Path.GetFullPath(file);
                 var work = ThreadPool.Work(
                     name: nameof(GetLinkPath),
-                    cancellationToken: cancellationToken,
                     work: () => {
                         using (var wrapper = new ShellWrapper()) {
                             return wrapper.UseShell(wrapped => {
@@ -149,7 +148,8 @@ public sealed class Win32ShellService : Win32BaseService {
                                 return path;
                             });
                         }
-                    });
+                    },
+                    cancellationToken: cancellationToken);
                 return await work.ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {

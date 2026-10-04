@@ -13,8 +13,8 @@ public sealed class Win32ShellServiceTest {
     private string TempDirectory;
 
     private static void CreateShortcut(string shortcutPath, string targetPath) {
-        Type shellType = Type.GetTypeFromProgID("WScript.Shell", throwOnError: true);
-        object shellObject = Activator.CreateInstance(shellType);
+        var shellType = Type.GetTypeFromProgID("WScript.Shell", throwOnError: true);
+        var shellObject = Activator.CreateInstance(shellType);
         object shortcutObject = null;
         try {
             dynamic shell = shellObject;
@@ -133,16 +133,16 @@ public sealed class Win32ShellServiceTest {
 
     [Test]
     public async Task GetLinkPath_WhenShortcutIsInCurrentDirectory_ReturnsTargetPath() {
-        string currentDirectory = Directory.GetCurrentDirectory();
+        var currentDirectory = Directory.GetCurrentDirectory();
         try {
             Directory.SetCurrentDirectory(TempDirectory);
-            string target = Path.Combine(TempDirectory, "target.txt");
-            string shortcutPath = Path.Combine(TempDirectory, "target.lnk");
+            var target = Path.Combine(TempDirectory, "target.txt");
+            var shortcutPath = Path.Combine(TempDirectory, "target.lnk");
             File.WriteAllText(target, "target");
             CreateShortcut(shortcutPath, target);
-            using Win32ShellService service = new Win32ShellService(threadPool: null);
+            using var service = new Win32ShellService(threadPool: null);
 
-            string result = await service.GetLinkPath("target.lnk", CancellationToken.None);
+            var result = await service.GetLinkPath("target.lnk", CancellationToken.None);
 
             Assert.That(result, Is.EqualTo(target).IgnoreCase);
         }
@@ -153,18 +153,18 @@ public sealed class Win32ShellServiceTest {
 
     [Test]
     public async Task GetLinkPath_WhenShortcutPathHasRelativeDirectory_ReturnsTargetPath() {
-        string currentDirectory = Directory.GetCurrentDirectory();
-        string shortcutDirectory = Path.Combine(TempDirectory, "shortcuts");
+        var currentDirectory = Directory.GetCurrentDirectory();
+        var shortcutDirectory = Path.Combine(TempDirectory, "shortcuts");
         Directory.CreateDirectory(shortcutDirectory);
         try {
             Directory.SetCurrentDirectory(TempDirectory);
-            string target = Path.Combine(TempDirectory, "target.txt");
-            string shortcutPath = Path.Combine(shortcutDirectory, "target.lnk");
+            var target = Path.Combine(TempDirectory, "target.txt");
+            var shortcutPath = Path.Combine(shortcutDirectory, "target.lnk");
             File.WriteAllText(target, "target");
             CreateShortcut(shortcutPath, target);
-            using Win32ShellService service = new Win32ShellService(threadPool: null);
+            using var service = new Win32ShellService(threadPool: null);
 
-            string result = await service.GetLinkPath(
+            var result = await service.GetLinkPath(
                 Path.Combine("shortcuts", "target.lnk"), CancellationToken.None);
 
             Assert.That(result, Is.EqualTo(target).IgnoreCase);
@@ -176,51 +176,51 @@ public sealed class Win32ShellServiceTest {
 
     [Test]
     public async Task GetLinkPath_WhenCurrentDirectoryChangesWhileQueued_UsesCallersDirectory() {
-        string currentDirectory = Directory.GetCurrentDirectory();
-        string callerDirectory = Path.Combine(TempDirectory, "caller");
-        string workerDirectory = Path.Combine(TempDirectory, "worker");
-        string callerShortcutDirectory = Path.Combine(callerDirectory, "shortcuts");
-        string workerShortcutDirectory = Path.Combine(workerDirectory, "shortcuts");
+        var currentDirectory = Directory.GetCurrentDirectory();
+        var callerDirectory = Path.Combine(TempDirectory, "caller");
+        var workerDirectory = Path.Combine(TempDirectory, "worker");
+        var callerShortcutDirectory = Path.Combine(callerDirectory, "shortcuts");
+        var workerShortcutDirectory = Path.Combine(workerDirectory, "shortcuts");
         Directory.CreateDirectory(callerShortcutDirectory);
         Directory.CreateDirectory(workerShortcutDirectory);
-        string callerTarget = Path.Combine(callerDirectory, "target.txt");
-        string workerTarget = Path.Combine(workerDirectory, "target.txt");
+        var callerTarget = Path.Combine(callerDirectory, "target.txt");
+        var workerTarget = Path.Combine(workerDirectory, "target.txt");
         File.WriteAllText(callerTarget, "caller target");
         File.WriteAllText(workerTarget, "worker target");
         CreateShortcut(Path.Combine(callerShortcutDirectory, "target.lnk"), callerTarget);
         CreateShortcut(Path.Combine(workerShortcutDirectory, "target.lnk"), workerTarget);
 
-        using ManualResetEventSlim workerStarted = new ManualResetEventSlim();
-        using ManualResetEventSlim releaseWorker = new ManualResetEventSlim();
-        STAThreadPool pool = new STAThreadPool(
+        using var workerStarted = new ManualResetEventSlim();
+        using var releaseWorker = new ManualResetEventSlim();
+        var pool = new STAThreadPool(
             nameof(GetLinkPath_WhenCurrentDirectoryChangesWhileQueued_UsesCallersDirectory)) {
             WorkerCountMax = 1,
         };
         try {
-            Task blocker = pool.Work(
+            var blocker = pool.Work(
                 name: "BlockLookup",
-                cancellationToken: CancellationToken.None,
                 work: () => {
                     workerStarted.Set();
                     if (!releaseWorker.Wait(TimeSpan.FromSeconds(10))) {
                         throw new TimeoutException("The queued shortcut lookup was not released.");
                     }
-                });
+                },
+                cancellationToken: CancellationToken.None);
             Assert.That(workerStarted.Wait(TimeSpan.FromSeconds(10)), Is.True);
 
             Directory.SetCurrentDirectory(callerDirectory);
-            using Win32ShellService service = new Win32ShellService(pool);
-            Task<string> lookup = service.GetLinkPath(
+            using var service = new Win32ShellService(pool);
+            var lookup = service.GetLinkPath(
                 Path.Combine("shortcuts", "target.lnk"), CancellationToken.None);
 
             Directory.SetCurrentDirectory(workerDirectory);
             releaseWorker.Set();
-            Task blockerCompletion = await Task.WhenAny(blocker, Task.Delay(TimeSpan.FromSeconds(10)));
+            var blockerCompletion = await Task.WhenAny(blocker, Task.Delay(TimeSpan.FromSeconds(10)));
             Assert.That(blockerCompletion, Is.SameAs(blocker));
             await blocker;
-            Task lookupCompletion = await Task.WhenAny(lookup, Task.Delay(TimeSpan.FromSeconds(10)));
+            var lookupCompletion = await Task.WhenAny(lookup, Task.Delay(TimeSpan.FromSeconds(10)));
             Assert.That(lookupCompletion, Is.SameAs(lookup));
-            string result = await lookup;
+            var result = await lookup;
 
             Assert.That(result, Is.EqualTo(callerTarget).IgnoreCase);
         }
