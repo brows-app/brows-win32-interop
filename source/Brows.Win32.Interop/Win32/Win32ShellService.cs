@@ -134,15 +134,15 @@ public sealed class Win32ShellService : Win32BaseService {
                 return null;
             }
             try {
-                var shortcutPath = Path.GetFullPath(file);
+                var pathToLnk = Path.GetFullPath(file);
                 var work = ThreadPool.Work(
                     name: nameof(GetLinkPath),
                     work: () => {
                         using (var wrapper = new ShellWrapper()) {
                             return wrapper.UseShell(wrapped => {
                                 var shell = (dynamic)wrapped;
-                                var folder = shell.NameSpace(Path.GetDirectoryName(shortcutPath));
-                                var folderItem = folder?.ParseName(Path.GetFileName(shortcutPath));
+                                var folder = shell.NameSpace(Path.GetDirectoryName(pathToLnk));
+                                var folderItem = folder?.ParseName(Path.GetFileName(pathToLnk));
                                 var link = folderItem?.GetLink;
                                 var path = link?.Path;
                                 return path;
