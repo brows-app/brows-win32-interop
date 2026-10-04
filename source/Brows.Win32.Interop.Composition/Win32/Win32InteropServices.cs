@@ -62,10 +62,13 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
         }
     }
 
+    IWin32FileOperation IWin32InteropServices.FileOperation(string directory) {
+        return new Win32FileOperation(directory, ThreadPool);
+    }
+
     private sealed class ServiceWrapper : IDisposable {
         public Win32KernelService Kernel { get; }
         public Win32ShellService Shell { get; }
-        public Win32FileOperation FileOperation { get; }
 
         public STAThreadPool ThreadPool { get; }
 

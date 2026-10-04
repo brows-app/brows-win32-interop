@@ -1,4 +1,5 @@
 ﻿[assembly: ComVisible(false)]
+[assembly: InternalsVisibleTo("Brows.Win32.Interop.Composition")]
 [assembly: InternalsVisibleTo("Brows.Win32.Interop.Operations.Tests")]
 
 #if NETFRAMEWORK
