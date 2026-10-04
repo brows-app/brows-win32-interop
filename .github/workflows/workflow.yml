@@ -80,4 +80,7 @@ jobs:
       run: |
            foreach($file in (Get-ChildItem "${{ env.CUSTOM_PACK_OUTPUT }}" -Recurse -Include *.nupkg)) {
              dotnet nuget push $file --api-key "${{steps.login.outputs.NUGET_API_KEY}}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+             if ($LASTEXITCODE -ne 0) {
+               throw "dotnet nuget push failed for '$file' with exit code $LASTEXITCODE."
+             }
            }

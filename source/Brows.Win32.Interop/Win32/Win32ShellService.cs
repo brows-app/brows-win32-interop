@@ -2,6 +2,7 @@
 using Brows.Win32.InteropServices;
 using Brows.Win32.PlatformInvoke;
 using Domore.Logs;
+using System;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -38,16 +39,23 @@ public sealed class Win32ShellService : Win32BaseService {
     }
 
     private async Task ExecuteAsync(string file,
-                            string parameters,
-                            string verb,
-                            string name,
-                            CancellationToken cancellationToken) {
+                                    Func<string> parametersFactory,
+                                    string verb,
+                                    string name,
+                                    CancellationToken cancellationToken) {
         BeginOperation();
         try {
+            var parameters = default(string);
+            if (parametersFactory is not null) {
+                if (cancellationToken.IsCancellationRequested) {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+                parameters = parametersFactory();
+            }
             var work = ThreadPool.Work(
                 name: name,
-                cancellationToken: cancellationToken,
-                work: () => Execute(file, parameters, verb));
+                work: () => Execute(file, parameters, verb),
+                cancellationToken: cancellationToken);
             await work.ConfigureAwait(false);
         }
         finally {
@@ -85,7 +93,11 @@ public sealed class Win32ShellService : Win32BaseService {
     /// <returns>A task that completes when the Shell execution call finishes.</returns>
     public Task ExecuteDefault(string file, CancellationToken cancellationToken = default) {
         return ExecuteAsync(
-            file, parameters: null, verb: null, name: nameof(ExecuteDefault), cancellationToken);
+            file,
+            verb: null,
+            name: nameof(ExecuteDefault),
+            parametersFactory: null,
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -97,7 +109,11 @@ public sealed class Win32ShellService : Win32BaseService {
     /// <returns>A task that completes when the Shell execution call finishes.</returns>
     public Task ExecuteDefault(string file, string with, CancellationToken cancellationToken = default) {
         return ExecuteAsync(
-            file: with, parameters: $"\"{file}\"", verb: null, name: nameof(ExecuteDefault), cancellationToken);
+            file: with,
+            verb: null,
+            name: nameof(ExecuteDefault),
+            parametersFactory: () => $"\"{(string.IsNullOrEmpty(file) ? file : Path.GetFullPath(file))}\"",
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -108,7 +124,11 @@ public sealed class Win32ShellService : Win32BaseService {
     /// <returns>A task that completes when the Shell execution call finishes.</returns>
     public Task ExecuteProperties(string file, CancellationToken cancellationToken = default) {
         return ExecuteAsync(
-            file, parameters: null, verb: "properties", name: nameof(ExecuteProperties), cancellationToken);
+            file,
+            verb: "properties",
+            name: nameof(ExecuteProperties),
+            parametersFactory: null,
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -134,21 +154,22 @@ public sealed class Win32ShellService : Win32BaseService {
                 return null;
             }
             try {
+                var pathToLnk = Path.GetFullPath(file);
                 var work = ThreadPool.Work(
                     name: nameof(GetLinkPath),
-                    cancellationToken: cancellationToken,
                     work: () => {
                         using (var wrapper = new ShellWrapper()) {
                             return wrapper.UseShell(wrapped => {
                                 var shell = (dynamic)wrapped;
-                                var folder = shell.NameSpace(Path.GetDirectoryName(file));
-                                var folderItem = folder?.ParseName(Path.GetFileName(file));
+                                var folder = shell.NameSpace(Path.GetDirectoryName(pathToLnk));
+                                var folderItem = folder?.ParseName(Path.GetFileName(pathToLnk));
                                 var link = folderItem?.GetLink;
                                 var path = link?.Path;
                                 return path;
                             });
                         }
-                    });
+                    },
+                    cancellationToken: cancellationToken);
                 return await work.ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
