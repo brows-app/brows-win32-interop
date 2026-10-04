@@ -1,8 +1,8 @@
 # Solution code review
 
-Reviewed on 2026-10-02. Scope: all 46 C# source files, both libraries, both test projects, build/package settings, and the release workflow. Particular attention was given to native signatures, COM vtable order, HRESULT handling, apartment use, cancellation, and resource lifetime.
+Initial review completed on 2026-10-02. A status follow-up on 2026-10-03 checked findings #3 and #17–20. The initial scope covered all 46 C# source files, both libraries, both test projects, build/package settings, and the release workflow, with particular attention to native signatures, COM vtable order, HRESULT handling, apartment use, cancellation, and resource lifetime.
 
-There are **20 numbered findings** below. The Boolean returned by `Work` and `Operate` means that some work was done, whether or not it succeeded; returning `true` after the invalid-name probe is expected under that contract, so it is not a finding. P1 means high priority, P2 means medium priority, and P3 means low priority. Findings distinguish reproduced behavior, defects established by code inspection, and platform/API contract limitations. Finding #1 has since been fixed; its status is recorded below.
+There are **20 numbered findings** below. The Boolean returned by `Work` and `Operate` means that some work was done, whether or not it succeeded; returning `true` after the invalid-name probe is expected under that contract, so it is not a finding. P1 means high priority, P2 means medium priority, and P3 means low priority. Findings distinguish reproduced behavior, defects established by code inspection, and platform/API contract limitations. Findings #1–16 and #18–20 are marked fixed or resolved below; finding #17 remains open.
 
 ## Findings
 
@@ -32,13 +32,15 @@ Before the fix, the progress sink was advised only when `Silent` was true. With 
 
 ### 3. [P1] Progress updates violate the dependency's UI context requirement
 
+**Status: Resolved by upgrading `Brows.Operations` to 1.2.0.**
+
 **Location:** [Win32ProgressSink.cs:38](source/Brows.Win32.Interop.Operations/Win32/Win32ProgressSink.cs#L38), [Win32FileOperation.cs:156,245–248](source/Brows.Win32.Interop.Operations/Win32/Win32FileOperation.cs#L156).
 
-In silent mode, `UpdateProgress` runs during `PerformOperations` on an STA worker and calls `IOperationProgress.Change` directly there. `Brows.Operations` 1.1.0 explicitly requires `IOperationProgress` to be used on the operation's UI synchronization context. Being an STA thread does not make this worker the UI thread. Progress updates can consequently run UI event handlers on the wrong thread and race with updates to the operation tree from the UI or other workers.
+Before the dependency update, silent-mode `UpdateProgress` ran during `PerformOperations` on an STA worker and called `IOperationProgress.Change` there, while `Brows.Operations` 1.1.0 required calls on the operation's UI synchronization context. An STA worker is not necessarily that context.
 
-**Evidence:** The native call and callback occur inside `ThreadPool.Work`; the context requirement is in the installed package's XML documentation for `IOperationProgress`. Its progress wrapper directly updates operation state rather than dispatching the call to the UI.
+**Evidence:** The `Brows.Operations` 1.2.0 XML documentation for `IOperationProgress` says its members can be called from any thread and that calls made off the operator's synchronization context are posted there, so state changes and notifications run on that context. The `Change` documentation further says off-context reports are applied asynchronously and consecutive pending reports for the same operation may be merged. This contract is present in the package assets for all four target frameworks used by this solution.
 
-**Fix:** Capture the caller's operation context before dispatch and marshal progress reports to it, for example through an `IProgress<T>` adapter created on that context. Keep cancellation checks local to the native callback.
+**Resolution:** `Directory.Packages.props` now selects `Brows.Operations` 1.2.0. The existing direct call from `Win32ProgressSink` is supported by the updated contract, so this repository does not need its own synchronization-context adapter. Progress notifications may be asynchronous and coalesced as documented by the dependency.
 
 ### 4. [P2] Public service methods bypass all disposal coordination
 
@@ -172,7 +174,7 @@ Before the fix, `PackageReadmeFile` was set to `README.md`, but neither library 
 
 **Reproduced:** `dotnet pack --no-build --no-restore --configuration Release` failed for both source projects with `NU5039: The readme file 'README.md' does not exist in the package.` This blocks the release workflow before publishing.
 
-**Fix applied:** Each packable project now has its own README, and the shared source props explicitly packs it at the NuGet package root. The repository root also has a README. A Release solution build and `dotnet pack --no-build --no-restore` succeeded; both `.nupkg` files contain a nonempty `README.md` at package root. The solution's `dotnet test` command completed successfully, though the current test projects contain no test cases.
+**Fix applied:** Each packable project now has its own README, and the shared source props explicitly packs it at the NuGet package root. The repository root also has a README. A Release solution build and `dotnet pack --no-build --no-restore` succeeded; both `.nupkg` files contain a nonempty `README.md` at package root. At the time of that validation, the solution's test command completed successfully without executing cases; test coverage was added later (see finding 18).
 
 ### 15. [P2] global.json specifies an invalid SDK version
 
@@ -205,6 +207,8 @@ Before the fix, the first value also had the wrong severity bits: it represented
 
 ### 17. [P2] A failed package push can be hidden by a later successful push
 
+**Status: Open.**
+
 **Location:** [workflow.yml:81–83](.github/workflows/workflow.yml#L81).
 
 The publishing loop does not check each `dotnet nuget push` exit code. With normal PowerShell native-command error behavior, failure to publish the first package followed by successful publication of the second leaves a zero final exit code. The step can appear successful despite a partial release. Fixing finding 14 makes this path reachable.
@@ -215,36 +219,43 @@ The publishing loop does not check each `dotnet nuget push` exit code. With norm
 
 ### 18. [P2] The solution's test step exercises no implementation
 
+**Status: Resolved.**
+
 **Location:** [Brows.Win32.Interop.Tests](tests/Brows.Win32.Interop.Tests/Brows.Win32.Interop.Tests.csproj), [Brows.Win32.Interop.Operations.Tests](tests/Brows.Win32.Interop.Operations.Tests/Brows.Win32.Interop.Operations.Tests.csproj), [workflow.yml:64–65](.github/workflows/workflow.yml#L64).
 
-Both test projects contain only assembly attributes and no test cases. The Interop test project does not even reference the library under test. CI's test step therefore provides no regression protection for the native signatures, cancellation, disposal, or result handling.
+At the time of the initial review, both test projects contained only assembly attributes and no test cases, and the Interop test project did not reference its library. That left CI's test step with no regression protection.
 
-**Verified:** Executed the existing test command across all four frameworks. It exited successfully without executing test cases. The focused runtime probes described in this report were separate temporary review tooling.
+**Current state:** Both test projects now reference their corresponding library and contain NUnit test fixtures. The solution test run discovered and passed 16 cases per test project for each of the four target frameworks. CI's test step now exercises implementation code.
 
-**Fix:** Add meaningful regression coverage for the reproduced failures, plus native structure sizes/offsets on x86 and x64 and callback behavior across the supported runtimes.
+This resolves the zero-test finding. It does not claim exhaustive coverage of native layouts or every callback path.
 
 ### 19. [P3] Malformed NTSTATUS documentation produces compiler warnings
 
+**Status: Fixed.**
+
 **Location:** [NTSTATUS.cs near 2916](source/Brows.Win32.Interop/Win32/PlatformInvoke/NTSTATUS.cs#L2916), [4882](source/Brows.Win32.Interop/Win32/PlatformInvoke/NTSTATUS.cs#L4882), [6966](source/Brows.Win32.Interop/Win32/PlatformInvoke/NTSTATUS.cs#L6966), [8942](source/Brows.Win32.Interop/Win32/PlatformInvoke/NTSTATUS.cs#L8942).
 
-Unprefixed blank lines interrupt XML documentation blocks before their closing tags. Generating documentation emits `CS1570` for incomplete summaries and unexpected closing tags on every library target framework.
+The cited XML documentation blocks are now contiguous, with no unprefixed blank lines before their closing tags.
 
-**Verified:** The full build produced these warnings. They are documentation defects, not evidence of incorrect enum values beyond finding 16.
+**Verified:** A follow-up Release build of the Interop project succeeded for all four target frameworks and emitted no `CS1570` warnings. It emitted four unrelated `CS8981` warnings for the lowercase `ntdll` and `winerror` type names.
 
-**Fix:** Keep each XML documentation block contiguous by prefixing its blank lines with `///`, and repair the misplaced closing tag where applicable.
+The original full-build warnings were documentation defects, not evidence of incorrect enum values beyond finding 16.
 
 ### 20. [P3] Package metadata links to a different repository
 
+**Status: Fixed.**
+
 **Location:** [source/Directory.Build.props:13](source/Directory.Build.props#L13).
 
-`PackageProjectUrl` points to `https://github.com/brows-app/brows-win32-windows`, while this solution's `RepositoryUrl` identifies `brows-win32-interop`. Consumers following the package project link are sent to a different repository name.
+`PackageProjectUrl` now points to `https://github.com/brows-app/brows-win32-interop`, matching this solution's `RepositoryUrl`.
 
-**Fix:** Set the project URL to the repository configured for this solution.
+The package project link now identifies the correct repository.
 
 ## Verification and limits
 
-- Built both libraries and both test projects in Release for `net462`, `net48`, `net8.0-windows`, and `net10.0-windows`: **zero errors**, 212 warnings including documentation and local SourceLink warnings.
-- Ran the existing solution test command: successful exit, **no test cases executed**.
+- Initial full build: both libraries and both test projects built in Release for `net462`, `net48`, `net8.0-windows`, and `net10.0-windows` with **zero errors** and 212 warnings, including documentation and local SourceLink warnings.
+- Initial test run completed successfully but executed **no test cases**. In the 2026-10-03 follow-up, the solution test command discovered and passed 16 cases per test project for all four target frameworks.
+- Follow-up Release build of the Interop project succeeded for all four target frameworks with **zero errors** and no `CS1570` warnings; four unrelated `CS8981` lowercase-name warnings remain.
 - Ran disposable Win32/COM probes against workspace fixtures in .NET 10 x64 and x86 before the callback fix. Confirmed findings 4, 6, 7, 8, 10, and 12 through the observations above. The updated HRESULT conversion was compile-checked after the fix.
 - Verified that `IFileOperationProgressSink` marshals and `IFileOperation.Advise` returns `S_OK` despite the internal types and assembly-level `ComVisible(false)`. Those visibility attributes are **not** reported as a defect.
 - Verified successful Shell shortcut resolution and successful silent file creation. Compared `IFileOperation` and `IFileOperationProgressSink` GUIDs, method order, parameter widths, Unicode strings, and BOOL output against the installed SDK. No vtable-order mismatch was found in these declarations. Releasing a queued source item's managed wrapper before `PerformOperations` is not itself a finding: COM retains the native references needed by the queued operation.
