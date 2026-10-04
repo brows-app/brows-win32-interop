@@ -38,10 +38,10 @@ public sealed class Win32ShellService : Win32BaseService {
     }
 
     private async Task ExecuteAsync(string file,
-                            string parameters,
-                            string verb,
-                            string name,
-                            CancellationToken cancellationToken) {
+                                    string parameters,
+                                    string verb,
+                                    string name,
+                                    CancellationToken cancellationToken) {
         BeginOperation();
         try {
             var work = ThreadPool.Work(
