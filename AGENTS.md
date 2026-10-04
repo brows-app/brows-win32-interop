@@ -69,8 +69,12 @@ Use `--no-build` only when the binaries include the latest code changes.
   BOM; Markdown uses UTF-8 without BOM. Keep C# and XAML lines within the
   configured 120-column guideline.
 - Use file-scoped namespaces and opening braces on the same line. Follow the
-  configured C# style; `.editorconfig` prefers explicit local types over `var`.
+  configured C# style; prefer `var` over explicit type names for local variables.
   Use PascalCase for types and members and an `I` prefix for interfaces.
+- Never prefix type names with their namespace. Always use `using` statements
+  to import namespaced types.
+- Method parameters of type `CancellationToken` must always come last in the
+  parameter list. Pass `CancellationToken` arguments last when calling methods.
 - Use the configured C# language version. APIs must be available on every
   framework targeted by the affected project. Preserve framework-specific
   conditions and compatibility shims; a newer language version does not supply
