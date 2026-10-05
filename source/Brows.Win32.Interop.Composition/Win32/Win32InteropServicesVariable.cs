@@ -1,5 +1,6 @@
 ﻿using Brows.Composition;
 using Brows.Threading;
+using System;
 
 namespace Brows.Win32;
 
@@ -16,4 +17,17 @@ public sealed class Win32InteropServicesVariable : IExportVariable {
     /// caller-owned and is not emptied when the export shuts down.
     /// </remarks>
     public STAThreadPool ThreadPool { get; set; }
+
+    /// <summary>
+    /// Gets or sets the callback that supplies the owner window for Shell UI shown by file-operation batches.
+    /// </summary>
+    /// <value>
+    /// The delegate to invoke for an owner window handle, or <see langword="null"/> to run batches without one.
+    /// </value>
+    /// <remarks>
+    /// Apply this configuration before the export creates its underlying services. The delegate runs on an STA
+    /// worker while a batch executes; it must return promptly and must not synchronously wait on a thread that
+    /// could be waiting for the batch, or the batch can hang.
+    /// </remarks>
+    public Func<IntPtr> OnGetOwnerWindow { get; set; }
 }

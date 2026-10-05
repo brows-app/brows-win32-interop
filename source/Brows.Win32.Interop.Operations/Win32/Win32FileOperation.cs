@@ -103,8 +103,12 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
         });
     }
 
-    private IntPtr Window() {
-        return Win32WindowHelper.GetWindow();
+    private IntPtr GetOwnerWindow() {
+        var callback = OnGetOwnerWindow;
+        if (callback is not null) {
+            return callback();
+        }
+        return IntPtr.Zero;
     }
 
     private bool Work() {
@@ -126,29 +130,26 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
                 hr = FileOperation.SetOperationFlags(Flags);
                 hr.ThrowOnError();
 
-                var window = Window();
+                var window = GetOwnerWindow();
                 if (window != IntPtr.Zero) {
                     hr = FileOperation.SetOwnerWindow(window);
                     hr.ThrowOnError();
                 }
-                var progressSinkCookie = default(uint);
                 var progressSink = new Win32ProgressSink(
                     Silent ? OperationProgress : null,
                     CancellationToken);
-                hr = FileOperation.Advise(progressSink, out progressSinkCookie);
+                hr = FileOperation.Advise(progressSink, out var progressSinkCookie);
                 hr.ThrowOnError();
                 try {
                     CancellationToken.ThrowIfCancellationRequested();
                     var performHr = FileOperation.PerformOperations();
-                    var aborted = default(bool);
-                    var abortedHr = FileOperation.GetAnyOperationsAborted(out aborted);
-                    CancellationToken.ThrowIfCancellationRequested();
+                    var abortedHr = FileOperation.GetAnyOperationsAborted(out var aborted);
                     performHr.ThrowOnError();
                     abortedHr.ThrowOnError();
 
                     if (aborted) {
                         if (Log.Warn()) {
-                            Log.Warn($"{nameof(Work)} aborted");
+                            Log.Warn($"Work aborted");
                         }
                     }
                     return true;
@@ -269,6 +270,16 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
     public bool Silent { get; set; }
 
     /// <summary>
+    /// Gets or sets the callback that supplies the owner window for Shell UI shown by the batch.
+    /// </summary>
+    /// <remarks>
+    /// The callback runs on the STA worker during <see cref="Operate"/> and must return promptly. It must not
+    /// synchronously wait on a thread that could be waiting for the batch, or the batch can hang. Return
+    /// <see cref="IntPtr.Zero"/> to run without an owner window, which is the default.
+    /// </remarks>
+    public Func<IntPtr> OnGetOwnerWindow { get; set; }
+
+    /// <summary>
     /// Gets the destination for copy, move, and create operations and the containing directory for delete and rename operations.
     /// </summary>
     public string Directory { get; }
@@ -304,6 +315,7 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
             CreateFiles = _CreateFiles?.ToList(),
             DeleteFiles = _DeleteFiles?.ToList(),
             EarlyFailure = EarlyFailure,
+            OnGetOwnerWindow = OnGetOwnerWindow,
             MoveFiles = _MoveFiles?.ToList(),
             NoConfirmation = NoConfirmation,
             NoErrorUI = NoErrorUI,

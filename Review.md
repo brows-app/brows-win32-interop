@@ -49,21 +49,28 @@ Resolve by routing batch execution through the same admission the other facade m
 in `ActiveFacadeOperations` (or an equivalent registration) so `Kill` waits for admitted batches, and make
 `FileOperation` reject calls once `Killed` is set.
 
-### 25. [P1] Owner-window lookup can deadlock the STA worker against the UI thread
+### 25. [P1] [Resolved] Owner-window lookup can deadlock the STA worker against the UI thread
 
 **Location:** [Win32WindowHelper.cs:30-46](source/Brows.Win32.Interop/Win32/Win32WindowHelper.cs#L45) and
-[Win32WindowHelper.cs:68-79](source/Brows.Win32.Interop/Win32/Win32WindowHelper.cs#L76).
+[Win32WindowHelper.cs:68-79](source/Brows.Win32.Interop/Win32/Win32WindowHelper.cs#L76). (The file has since been
+deleted by the fix.)
 
-`Win32FileOperation.Work` calls `Win32WindowHelper.GetWindow()` on the STA worker. The WPF path synchronously invokes
-the application dispatcher (`invoke.Invoke(dispatcher, ...)`), and the Windows Forms path synchronously invokes
-`Control.Invoke`. If the UI thread is blocked waiting on the batch - for example a UI thread that synchronously waits
-on `Operate(...).GetAwaiter().GetResult()` during shutdown - the worker waits inside the cross-thread invoke while the
-UI thread waits for the worker's batch, producing a permanent deadlock that also wedges any subsequent
+`Win32FileOperation.Work` called `Win32WindowHelper.GetWindow()` on the STA worker. The WPF path synchronously invoked
+the application dispatcher (`invoke.Invoke(dispatcher, ...)`), and the Windows Forms path synchronously invoked
+`Control.Invoke`. If the UI thread was blocked waiting on the batch - for example a UI thread that synchronously waits
+on `Operate(...).GetAwaiter().GetResult()` during shutdown - the worker waited inside the cross-thread invoke while the
+UI thread waited for the worker's batch, producing a permanent deadlock that also wedged any subsequent
 `STAThreadPool.Empty()`.
 
-Resolve by not calling `GetWindow()` from the batch at all (require the owner window to be supplied by the caller, who
-knows the UI context), or by using a non-blocking mechanism with a timeout (`Dispatcher.BeginInvoke` with a bounded
-wait) so a busy or blocked UI thread degrades to `IntPtr.Zero` instead of hanging the worker.
+Resolved by not calling `GetWindow()` from the batch at all: `Win32WindowHelper` is deleted, and the owner window is
+supplied by the caller, who knows the UI context. `Win32FileOperation` exposes an `OnGetOwnerWindow` callback
+(defaulting to no owner window) that the composition export passes through from
+`Win32InteropServicesVariable.OnGetOwnerWindow`. The XML documentation on both properties and the Operations README
+state the contract: the callback runs on the STA worker during `Operate` and must not synchronously wait on a thread
+that could be waiting for the batch. Note for follow-up work: while fixing this issue the lifecycle fields of
+`Win32InteropServices` were also renamed from `Killed`/`KillFinished` to `Killing` (entered) and `Killed` (finished),
+mirroring `Win32BaseService`'s `Disposing`/`Disposed`; the shutdown tests that reflect on those field names were
+updated to match. The full test suite passes on all target frameworks after the change.
 
 ### 26. [P2] [Resolved] ShellExecuteExW failures produce a misleading Win32Exception
 
@@ -97,18 +104,21 @@ discards the original exception and the caller diagnoses the unadvising failure 
 Resolve by not throwing from `finally`: log the `Unadvise` failure (the batch already has an `ILog`) or capture the
 HRESULT for the success path only.
 
-### 28. [P2] Cancellation after PerformOperations reports completed work as canceled
+### 28. [P2] [Resolved] Cancellation after PerformOperations reports completed work as canceled
 
 **Location:** [Win32FileOperation.cs:142-147](source/Brows.Win32.Interop.Operations/Win32/Win32FileOperation.cs#L142).
 
-`Work` calls `CancellationToken.ThrowIfCancellationRequested()` between `PerformOperations` and
-`performHr.ThrowOnError()`. When the token is canceled while the native call runs, the call still completes and the
-files are actually copied or moved, but the caller receives `OperationCanceledException`: a retry duplicates the
-work, and a genuine failure HRESULT in `performHr` and the `aborted` state are never surfaced.
+`Work` called `CancellationToken.ThrowIfCancellationRequested()` between `PerformOperations` and
+`performHr.ThrowOnError()`. When the token was canceled while the native call ran, the call still completed and the
+files were actually copied or moved, but the caller received `OperationCanceledException`: a retry duplicated the
+work, and a genuine failure HRESULT in `performHr` and the `aborted` state were never surfaced.
 
-Resolve by checking `performHr` first and reporting the operation's real outcome: treat the operation as completed
-when `PerformOperations` returns success, and only honor a pre-`PerformOperations` cancellation check (line 141)
-for the queued phase.
+Resolved by removing the post-`PerformOperations` cancellation check so the batch reports its real outcome: the
+`performHr` and `abortedHr` results are always observed, and only the pre-`PerformOperations` check (line 141)
+remains for the queued phase. The existing cancellation coverage (`Operate_WhenTokenAlreadyCanceled_DoesNotRun`)
+targets the queued phase and still passes; a deterministic mid-`PerformOperations` cancellation test was not
+added because timing a cancel inside the native call cannot be made reliable. The full Operations suite passes on
+all target frameworks after the change.
 
 ### 29. [P2] [Resolved] A concurrent second Kill returns before shutdown completes
 

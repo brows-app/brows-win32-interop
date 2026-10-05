@@ -59,14 +59,14 @@ public sealed class KernelShutdownTest {
             CancellationToken.None,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default);
-        var killedField = typeof(Win32InteropServices).GetField(
-            "Killed", BindingFlags.Instance | BindingFlags.NonPublic);
+        var killingField = typeof(Win32InteropServices).GetField(
+            "Killing", BindingFlags.Instance | BindingFlags.NonPublic);
 
         try {
-            var killed = SpinWait.SpinUntil(
-                () => (bool)killedField.GetValue(Services),
+            var killing = SpinWait.SpinUntil(
+                () => (bool)killingField.GetValue(Services),
                 TimeSpan.FromSeconds(10));
-            Assert.That(killed, Is.True, "Shutdown did not enter its lifecycle state.");
+            Assert.That(killing, Is.True, "Shutdown did not enter its lifecycle state.");
             var killCompletion = await Task.WhenAny(kill, Task.Delay(TimeSpan.FromMilliseconds(500)));
             Assert.That(
                 killCompletion,
@@ -91,14 +91,14 @@ public sealed class KernelShutdownTest {
         var pendingOperation = UseServices(Services, operation.Task);
         var firstKill = StartKill();
         var secondKill = StartKill();
-        var killedField = typeof(Win32InteropServices).GetField(
-            "Killed", BindingFlags.Instance | BindingFlags.NonPublic);
+        var killingField = typeof(Win32InteropServices).GetField(
+            "Killing", BindingFlags.Instance | BindingFlags.NonPublic);
 
         try {
-            var killed = SpinWait.SpinUntil(
-                () => (bool)killedField.GetValue(Services),
+            var killing = SpinWait.SpinUntil(
+                () => (bool)killingField.GetValue(Services),
                 TimeSpan.FromSeconds(10));
-            Assert.That(killed, Is.True, "Shutdown did not enter its lifecycle state.");
+            Assert.That(killing, Is.True, "Shutdown did not enter its lifecycle state.");
             var concurrentCompletion = await Task.WhenAny(
                 firstKill,
                 secondKill,
