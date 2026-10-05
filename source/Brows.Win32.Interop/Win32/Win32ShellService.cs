@@ -34,7 +34,12 @@ public sealed class Win32ShellService : Win32BaseService {
         };
         var success = shell32.ShellExecuteExW(ref info);
         if (success == false) {
-            throw new Win32Exception();
+            // hInstApp holds the SE_ERR_* result of the call (values <= 32); the ambient
+            // thread error can be unrelated, for instance ERROR_CANCELLED when NO_UI
+            // suppresses an interaction the Shell wanted to show.
+            var hInstApp = info.hInstApp.ToInt64();
+            var error = hInstApp is >= 0 and <= 32 ? (int)hInstApp : Marshal.GetLastWin32Error();
+            throw new Win32Exception(error);
         }
     }
 
@@ -150,7 +155,7 @@ public sealed class Win32ShellService : Win32BaseService {
                 cancellationToken.ThrowIfCancellationRequested();
             }
             var ext = Path.GetExtension(file);
-            if (ext?.EndsWith("lnk", StringComparison.OrdinalIgnoreCase) != true) {
+            if (ext?.Equals(".lnk", StringComparison.OrdinalIgnoreCase) != true) {
                 return null;
             }
             try {

@@ -14,6 +14,7 @@ public sealed class ShellContextTest {
     [Test]
     public void UseServices_WhenInnerTaskCompletesUnderCallerContext_DoesNotPostContinuation() {
         var services = new Win32InteropServices();
+        ((IExportAndVary<Win32InteropServicesVariable>)services).Vary(null, CancellationToken.None);
         var innerTask = new TaskCompletionSource<bool>();
         var context = new RecordingSynchronizationContext();
         Task operation = null;

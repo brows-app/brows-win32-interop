@@ -15,10 +15,14 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
     private readonly Lazy<ServiceWrapper> LazyServices;
     private readonly object Locker = new();
 
+    private bool Killing;
     private bool Killed;
     private bool ThreadPoolOwned;
     private STAThreadPool ThreadPool;
     private int ActiveFacadeOperations;
+
+    private STAThreadPool ThreadPoolNotNull =>
+        ThreadPool ?? throw new InvalidOperationException("The STA thread pool is null.");
 
     private Task<T> UseServices<T>(Func<ServiceWrapper, CancellationToken, Task<T>> function,
                                 CancellationToken cancellationToken) {
@@ -27,7 +31,7 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
         }
         ServiceWrapper services;
         lock (Locker) {
-            if (Killed) {
+            if (Killing || Killed) {
                 throw new InvalidOperationException("The Win32 interop services have already been killed.");
             }
             services = LazyServices.Value;
@@ -64,10 +68,10 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
     public Win32InteropServices() {
         LazyServices = new(() => {
             lock (Locker) {
-                if (Killed) {
+                if (Killing || Killed) {
                     throw new InvalidOperationException("The Win32 interop services have already been killed.");
                 }
-                return new(ThreadPool);
+                return new(ThreadPoolNotNull);
             }
         });
     }
@@ -79,7 +83,7 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
         }
         var threadPool = variable?.ThreadPool;
         lock (Locker) {
-            if (Killed) {
+            if (Killing || Killed) {
                 throw new InvalidOperationException("The Win32 interop services have already been killed.");
             }
             if (LazyServices.IsValueCreated) {
@@ -99,7 +103,13 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
             if (Killed) {
                 return;
             }
-            Killed = true;
+            if (Killing) {
+                while (!Killed) {
+                    Monitor.Wait(Locker);
+                }
+                return;
+            }
+            Killing = true;
             while (ActiveFacadeOperations > 0) {
                 Monitor.Wait(Locker);
             }
@@ -108,27 +118,35 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
             threadPoolOwned = ThreadPoolOwned;
         }
         try {
-            services?.Dispose();
-        }
-        catch (Exception ex) {
-            if (Log.Error()) {
-                Log.Error(ex);
+            try {
+                services?.Dispose();
+            }
+            catch (Exception ex) {
+                if (Log.Error()) {
+                    Log.Error(ex);
+                }
+            }
+            try {
+                if (threadPoolOwned) {
+                    threadPool?.Empty();
+                }
+            }
+            catch (Exception ex) {
+                if (Log.Error()) {
+                    Log.Error(ex);
+                }
             }
         }
-        try {
-            if (threadPoolOwned) {
-                threadPool.Empty();
-            }
-        }
-        catch (Exception ex) {
-            if (Log.Error()) {
-                Log.Error(ex);
+        finally {
+            lock (Locker) {
+                Killed = true;
+                Monitor.PulseAll(Locker);
             }
         }
     }
 
     IWin32FileOperation IWin32InteropServices.FileOperation(string directory) {
-        return new Win32FileOperation(directory, ThreadPool);
+        return new Win32FileOperation(directory, ThreadPoolNotNull);
     }
 
     Task<bool> IWin32InteropServices.PathsAreEquivalent(string path1,

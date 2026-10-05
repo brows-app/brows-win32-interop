@@ -37,6 +37,7 @@ public sealed class KernelShutdownTest {
     [SetUp]
     public void SetUp() {
         Services = new();
+        ((IExportAndVary<Win32InteropServicesVariable>)Services).Vary(null, CancellationToken.None);
         TempDirectory = Path.Combine(Path.GetTempPath(), nameof(KernelShutdownTest), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(TempDirectory);
     }
@@ -82,6 +83,73 @@ public sealed class KernelShutdownTest {
                 "Shutdown did not finish after the operation completed.");
             await cleanup;
         }
+    }
+
+    [Test]
+    public async Task Kill_WhenCalledConcurrently_EveryCallerWaitsForShutdownToFinish() {
+        var operation = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pendingOperation = UseServices(Services, operation.Task);
+        var firstKill = StartKill();
+        var secondKill = StartKill();
+        var killedField = typeof(Win32InteropServices).GetField(
+            "Killed", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        try {
+            var killed = SpinWait.SpinUntil(
+                () => (bool)killedField.GetValue(Services),
+                TimeSpan.FromSeconds(10));
+            Assert.That(killed, Is.True, "Shutdown did not enter its lifecycle state.");
+            var concurrentCompletion = await Task.WhenAny(
+                firstKill,
+                secondKill,
+                Task.Delay(TimeSpan.FromMilliseconds(500)));
+            Assert.That(
+                concurrentCompletion,
+                Is.Not.SameAs(firstKill),
+                "The first Kill returned while an admitted facade operation was pending.");
+            Assert.That(
+                concurrentCompletion,
+                Is.Not.SameAs(secondKill),
+                "A concurrent Kill returned before shutdown finished.");
+        }
+        finally {
+            operation.TrySetResult(1);
+            var cleanup = Task.WhenAll(pendingOperation, firstKill, secondKill);
+            var cleanupCompletion = await Task.WhenAny(cleanup, Task.Delay(TimeSpan.FromSeconds(10)));
+            Assert.That(
+                cleanupCompletion,
+                Is.SameAs(cleanup),
+                "Shutdown did not finish after the operation completed.");
+            await cleanup;
+        }
+
+        Task StartKill() {
+            return Task.Factory.StartNew(
+                () => ((IExportAndKill)Services).Kill(),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+        }
+    }
+
+    [Test]
+    public void FileOperation_WhenVaryWasNotCalled_ThrowsInvalidOperationException() {
+        var services = new Win32InteropServices();
+
+        Assert.That(
+            () => ((IWin32InteropServices)services).FileOperation(TempDirectory),
+            Throws.TypeOf<InvalidOperationException>());
+    }
+
+    [Test]
+    public void FileOperation_WhenVaryWasCalled_ReturnsOperation() {
+        var services = new Win32InteropServices();
+        ((IExportAndVary<Win32InteropServicesVariable>)services).Vary(null, CancellationToken.None);
+
+        var operation = ((IWin32InteropServices)services).FileOperation(TempDirectory);
+
+        Assert.That(operation, Is.Not.Null);
+        ((IExportAndKill)services).Kill();
     }
 
     [Test]
