@@ -1,4 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\source\Brows.Win32.Interop.Composition\Brows.Win32.Interop.Composition.csproj" />
+  </ItemGroup>
 </Project>

@@ -1,13 +1,15 @@
 # brows-win32-interop
 
-Windows interop libraries for .NET applications. The solution contains two NuGet packages:
+Windows interop libraries for .NET applications. The solution contains three NuGet packages:
 
 | Package | Purpose |
 | --- | --- |
 | [Brows.Win32.Interop](source/Brows.Win32.Interop/README.md) | Win32 and COM bindings, Shell execution and shortcut resolution, and file identity and case-sensitivity queries. |
 | [Brows.Win32.Interop.Operations](source/Brows.Win32.Interop.Operations/README.md) | Batched Windows Shell file operations: copy, move, create, delete, and rename. |
+| [Brows.Win32.Interop.Composition](source/Brows.Win32.Interop.Composition/README.md) | Brows.Composition exports for Win32 queries, Shell actions, and batched file operations. |
 
-Both packages support .NET Framework 4.6.2 and 4.8 and .NET 8 and 10 on Windows. They require Windows at runtime. See each package README for installation and API examples.
+All packages support .NET Framework 4.6.2 and 4.8 and .NET 8 and 10 on Windows. They require Windows at runtime. See
+each package README for installation and API examples.
 
 ## Build and test
 

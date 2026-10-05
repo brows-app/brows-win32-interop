@@ -8,25 +8,87 @@ using System.Threading.Tasks;
 namespace Brows.Win32;
 
 internal sealed class Win32InteropServices : IWin32InteropServices,
-                                             IExportAndVary,
+                                             IExportAndVary<Win32InteropServicesVariable>,
                                              IExportAndKill {
     private static readonly ILog Log = Logging.For(typeof(Win32InteropServices));
 
     private readonly Lazy<ServiceWrapper> LazyServices;
-    private readonly
-#if NET9_0_OR_GREATER
-        Lock
-#else
-        object
-#endif
-        Locker = new();
+    private readonly object Locker = new();
 
     private bool Killed;
-    private bool ThreadPoolOwned { get; set; }
-    private STAThreadPool ThreadPool { get; set; }
+    private bool ThreadPoolOwned;
+    private STAThreadPool ThreadPool;
+    private int ActiveFacadeOperations;
 
-    Task IExportAndVary.Vary(IExportVariables variables, CancellationToken token) {
-        throw new NotImplementedException();
+    private Task<T> UseServices<T>(Func<ServiceWrapper, CancellationToken, Task<T>> function,
+                                CancellationToken cancellationToken) {
+        if (function is null) {
+            throw new ArgumentNullException(nameof(function));
+        }
+        ServiceWrapper services;
+        lock (Locker) {
+            if (Killed) {
+                throw new InvalidOperationException("The Win32 interop services have already been killed.");
+            }
+            services = LazyServices.Value;
+            ActiveFacadeOperations++;
+        }
+        return TrackServicesOperation(services, function, cancellationToken);
+    }
+
+    private async Task<T> TrackServicesOperation<T>(ServiceWrapper services,
+                                                    Func<ServiceWrapper, CancellationToken, Task<T>> function,
+                                                    CancellationToken cancellationToken) {
+        try {
+            return await function(services, cancellationToken).ConfigureAwait(false);
+        }
+        finally {
+            lock (Locker) {
+                ActiveFacadeOperations--;
+                Monitor.PulseAll(Locker);
+            }
+        }
+    }
+
+    private Task UseServices(Func<ServiceWrapper, CancellationToken, Task> function,
+                             CancellationToken cancellationToken) {
+        if (function is null) {
+            throw new ArgumentNullException(nameof(function));
+        }
+        return UseServices(cancellationToken: cancellationToken, function: async (services, cancellationToken) => {
+            await function(services, cancellationToken).ConfigureAwait(false);
+            return 0;
+        });
+    }
+
+    public Win32InteropServices() {
+        LazyServices = new(() => {
+            lock (Locker) {
+                if (Killed) {
+                    throw new InvalidOperationException("The Win32 interop services have already been killed.");
+                }
+                return new(ThreadPool);
+            }
+        });
+    }
+
+    Task IExportAndVary<Win32InteropServicesVariable>.Vary(Win32InteropServicesVariable variable,
+                                                           CancellationToken cancellationToken) {
+        if (cancellationToken.IsCancellationRequested) {
+            return Task.FromCanceled(cancellationToken);
+        }
+        var threadPool = variable?.ThreadPool;
+        lock (Locker) {
+            if (Killed) {
+                throw new InvalidOperationException("The Win32 interop services have already been killed.");
+            }
+            if (LazyServices.IsValueCreated) {
+                throw new InvalidOperationException("The Win32 interop services have already been created.");
+            }
+            ThreadPool = threadPool ?? new(nameof(Win32InteropServices));
+            ThreadPoolOwned = ThreadPool != threadPool;
+        }
+        return Task.CompletedTask;
     }
 
     void IExportAndKill.Kill() {
@@ -38,6 +100,9 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
                 return;
             }
             Killed = true;
+            while (ActiveFacadeOperations > 0) {
+                Monitor.Wait(Locker);
+            }
             services = LazyServices.IsValueCreated ? LazyServices.Value : null;
             threadPool = ThreadPool;
             threadPoolOwned = ThreadPoolOwned;
@@ -64,6 +129,56 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
 
     IWin32FileOperation IWin32InteropServices.FileOperation(string directory) {
         return new Win32FileOperation(directory, ThreadPool);
+    }
+
+    Task<bool> IWin32InteropServices.PathsAreEquivalent(string path1,
+                                                        string path2,
+                                                        CancellationToken cancellationToken) {
+        return UseServices(
+            cancellationToken: cancellationToken,
+            function: (services, cancellationToken) => {
+                return Task.Run(() => services.Kernel.PathsAreEquivalent(path1, path2), cancellationToken);
+            });
+    }
+
+    Task<bool> IWin32InteropServices.PathIsCaseSensitive(string path, CancellationToken cancellationToken) {
+        return UseServices(
+            cancellationToken: cancellationToken,
+            function: (services, cancellationToken) => {
+                return Task.Run(() => services.Kernel.PathIsCaseSensitive(path), cancellationToken);
+            });
+    }
+
+    Task IWin32InteropServices.ExecuteDefault(string file, CancellationToken cancellationToken) {
+        return UseServices(
+            cancellationToken: cancellationToken,
+            function: (services, cancellationToken) => {
+                return services.Shell.ExecuteDefault(file, cancellationToken);
+            });
+    }
+
+    Task IWin32InteropServices.ExecuteDefault(string file, string with, CancellationToken cancellationToken) {
+        return UseServices(
+            cancellationToken: cancellationToken,
+            function: (services, cancellationToken) => {
+                return services.Shell.ExecuteDefault(file, with, cancellationToken);
+            });
+    }
+
+    Task IWin32InteropServices.ExecuteProperties(string file, CancellationToken cancellationToken) {
+        return UseServices(
+            cancellationToken: cancellationToken,
+            function: (services, cancellationToken) => {
+                return services.Shell.ExecuteProperties(file, cancellationToken);
+            });
+    }
+
+    Task<string> IWin32InteropServices.GetLinkPath(string file, CancellationToken cancellationToken) {
+        return UseServices(
+            cancellationToken: cancellationToken,
+            function: (services, cancellationToken) => {
+                return services.Shell.GetLinkPath(file, cancellationToken);
+            });
     }
 
     private sealed class ServiceWrapper : IDisposable {
