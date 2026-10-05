@@ -354,12 +354,14 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
         if (onOperationStarting is not null) {
             onOperationStarting();
         }
-        var work = ThreadPool.Work(
+        var work = Task.Run(
+            () => ThreadPool.Work(
                 name: nameof(Win32FileOperation),
                 work: agent.Work,
-                cancellationToken: token);
+                cancellationToken: token),
+            cancellationToken: token);
         try {
-            return await work;
+            return await work.ConfigureAwait(false);
         }
         finally {
             using var _ = agent._DirectoryWrap;

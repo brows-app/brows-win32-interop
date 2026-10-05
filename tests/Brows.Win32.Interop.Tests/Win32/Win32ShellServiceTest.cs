@@ -64,6 +64,17 @@ public sealed class Win32ShellServiceTest {
     }
 
     [Test]
+    public void ExecuteDefault_WithInvalidExecutable_ReportsNativeError() {
+        var invalidExecutable = Path.Combine(TempDirectory, "invalid.exe");
+        File.WriteAllText(invalidExecutable, "This is not an executable.");
+        using var service = new Win32ShellService(threadPool: null);
+
+        var exception = Assert.ThrowsAsync<Win32Exception>(async () => await service.ExecuteDefault(invalidExecutable));
+
+        Assert.That(exception.NativeErrorCode, Is.EqualTo(216));
+    }
+
+    [Test]
     public void ExecuteDefault_WithExecutable_WhenTokenIsCanceled_DoesNotLaunch() {
         var file = Path.Combine(TempDirectory, "document.txt");
         var executable = Path.Combine(TempDirectory, "missing.exe");

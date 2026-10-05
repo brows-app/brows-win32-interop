@@ -1,5 +1,17 @@
 # Code Review
 
+## Branch review against origin/dev (2026-10-05)
+
+Reviewed `origin/dev...HEAD` after fetching `origin/dev`: base
+`c485ed0665b0f955b519eb10e4306ec8110e51c8`, branch `bugs` at
+`d167e5e1c27bf8ccb7f17354b7f3fc6438f4d21f`. The working tree was clean before this review.
+The scope includes all 11 changed files, the relevant package READMEs, nearby implementations and tests,
+public interfaces, and shared build settings. New findings are **33-35** below. Existing findings and their
+numbers are retained. Follow-up work resolved #33 with context-independent batch dispatch and regression coverage,
+#34 with native Shell error reporting and regression coverage, and #35 with documentation updates.
+
+## Previous repository review
+
 Review completed on 2026-10-05. The branch diff (`origin/dev...HEAD`) and the working tree were both clean, so the
 review covered the entire repository: all files in `Brows.Win32.Interop`, `Brows.Win32.Interop.Operations`, and
 `Brows.Win32.Interop.Composition`, the `PlatformInvoke` and `ComTypes` declarations, all three test projects, and the
@@ -182,7 +194,91 @@ Resolved by deleting the `fileDir` line and invoking `act(item)` directly; `Iter
 with `ArgumentNullException` up front, replacing the dead null-propagation with a clear contract check. The full
 Operations suite passes on all target frameworks after the change.
 
-## Validation
+### 33. [P1] [Resolved] Batch shutdown accounting depends on the caller's synchronization context
+
+**Location:** [Win32FileOperation.cs:362-368](source/Brows.Win32.Interop.Operations/Win32/Win32FileOperation.cs#L362)
+and [Win32InteropServices.cs:114-116](source/Brows.Win32.Interop.Composition/Win32/Win32InteropServices.cs#L114).
+
+The new admission callbacks increment `ActiveOperationCount` before dispatch and decrement it in the `Operate`
+continuation, but `return await work` captures the caller's synchronization context. When a UI thread starts a
+batch and then calls synchronous `Kill`, shutdown waits for that count to reach zero while the continuation
+that releases the count waits for the UI thread. This introduces a shutdown deadlock even for an empty batch
+that never looks up an owner window. Removing `Win32WindowHelper` does not remove this dependency.
+
+A bounded probe using a recording synchronization context and a blocked single-worker pool reproduced the
+cycle: after releasing the worker, the batch remained incomplete, the active count remained 1, and `Kill`
+remained incomplete. Pumping the recorded callbacks let the batch and shutdown finish. The new shutdown tests
+use a context that continues pumping and therefore do not cover this case.
+
+**Resolved:** `Operate` now starts the `STAThreadPool.Work` call with `Task.Run`, so the pool's asynchronous
+scheduling path runs without the caller's synchronization context, then awaits it with `ConfigureAwait(false)`.
+The operation-finished callback can therefore release shutdown accounting even if the caller UI thread is blocked.
+The bounded `FileOperation_WhenCallerContextIsNotPumped_CompletesAndReleasesShutdown` regression test queues a
+batch behind a busy single-worker pool, starts shutdown, and verifies both complete without pumping the captured
+context. It failed before the fix and passes afterward on all target frameworks.
+
+### 34. [P2] [Resolved] Shell compatibility codes discard the native failure and can give unrelated messages
+
+**Location:** [Win32ShellService.cs:37-42](source/Brows.Win32.Interop/Win32/Win32ShellService.cs#L37).
+
+The new implementation always prefers `hInstApp` values between 0 and 32 to the captured native last error.
+Those values are Shell compatibility codes, not generally interchangeable with Win32 system error codes.
+For example, `SE_ERR_NOASSOC` is 31, but `new Win32Exception(31)` describes `ERROR_GEN_FAILURE`; Shell DLL-not-found
+code 32 describes a sharing violation when interpreted as a Win32 error. Even overlapping values lose the more
+specific reason returned by the native call.
+
+This was also reproduced through the production service: a text file with an `.exe` extension caused
+`ShellExecuteExW` to return false with `hInstApp = 5` and last error 216 (`ERROR_EXE_MACHINE_TYPE_MISMATCH`).
+`ExecuteDefault` instead threw `Win32Exception(5)` with "Access is denied." The added missing-file test cannot
+detect this because both code systems use 2 for that case.
+
+[Microsoft's ShellExecuteExW documentation](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecuteexw)
+explicitly recommends `GetLastError` for more accurate failure information and describes `SE_ERR_*` as compatibility
+values. With `SetLastError = true` on the P/Invoke, `Marshal.GetLastWin32Error()` reads the error cached for that call.
+
+**Resolved:** `Execute` now constructs `Win32Exception` from `Marshal.GetLastWin32Error()`, which reads the last
+error captured for this `SetLastError = true` P/Invoke. The new
+`ExecuteDefault_WithInvalidExecutable_ReportsNativeError` test uses an invalid `.exe` that yields native error 216
+and Shell code 5. It failed before the fix (reported 5) and passes after it (reports 216).
+
+### 35. [P3] [Resolved] Operations documentation advertises a callback unavailable on the public batch interface
+
+**Location:** [README.md:38](source/Brows.Win32.Interop.Operations/README.md#L38)
+and [Win32FileOperation.cs:293-302](source/Brows.Win32.Interop.Operations/Win32/Win32FileOperation.cs#L293).
+
+The new README text tells callers to supply `OnGetOwnerWindow`, but this property exists only on the internal
+`Win32FileOperation` implementation. `IWin32FileOperation`, the public batch type returned by
+`IWin32InteropServices.FileOperation`, does not expose it. A consumer following the new batch configuration
+guidance cannot compile `batch.OnGetOwnerWindow = ...`. Reflection over the built public interface confirmed
+that the property is absent.
+
+The public configuration route that actually exists is
+`Win32InteropServicesVariable.OnGetOwnerWindow` in the Composition package, applied before creating the batch.
+That route is not identified by the updated Operations README or demonstrated in the Composition README.
+
+**Resolved:** The Operations README now directs consumers to configure the callback through
+`Win32InteropServicesVariable.OnGetOwnerWindow` for batches created by the Composition export. The Composition
+README explains that the host must apply the variable before creating its services and includes a callback example
+and the worker-thread constraints.
+
+## Current branch-review validation
+
+- SDK 10.0.112 on Windows, selected by `global.json`'s 10.0.100 feature roll-forward policy.
+- `dotnet build brows-win32-interop.slnx --no-restore --configuration Release`: passed for `net462`, `net48`,
+  `net8.0-windows`, and `net10.0-windows`; 3 warnings, all unawaited-`Vary` warnings in the changed shutdown test.
+- Focused Composition shutdown/context fixtures: 15 tests passed per framework.
+- Operations project: 16 tests passed per framework.
+- `dotnet test brows-win32-interop.slnx --no-restore --configuration Release --no-build`: all 212 tests passed
+  (22 core, 16 Operations, and 15 Composition tests per framework).
+- The caller-context shutdown regression failed before the fix and passes across all frameworks; the invalid-
+  executable regression also failed before its fix and passes afterward. A bounded .NET 10 probe inspected the
+  public interface for finding 35. Probe sources,
+  binaries, and the invalid executable are confined to ignored `out/`; they are not included in the review diff.
+- `git diff --check origin/dev...HEAD` and the final working-tree diff check passed.
+- Restore and pack were not run; existing restored dependencies were sufficient for build and test, and no
+  packaging changes are part of the branch.
+
+## Previous repository-review validation
 
 All source, test, build, and documentation files in the repository were read for this review; no files were changed
 except this one. Two native behaviors were exercised directly on this machine: an `NtQueryInformationFile` probe

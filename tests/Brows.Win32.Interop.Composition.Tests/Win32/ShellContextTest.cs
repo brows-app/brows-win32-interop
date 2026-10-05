@@ -1,4 +1,5 @@
 ﻿using Brows.Composition;
+using Brows.Threading;
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
@@ -11,6 +12,88 @@ namespace Brows.Win32;
 
 [TestFixture]
 public sealed class ShellContextTest {
+    [Test]
+    public async Task FileOperation_WhenCallerContextIsNotPumped_CompletesAndReleasesShutdown() {
+        var services = new Win32InteropServices();
+        var pool = new STAThreadPool(nameof(FileOperation_WhenCallerContextIsNotPumped_CompletesAndReleasesShutdown)) {
+            WorkerCountMax = 1,
+        };
+        var context = new RecordingSynchronizationContext();
+        using var workerStarted = new ManualResetEventSlim();
+        using var releaseWorker = new ManualResetEventSlim();
+        Task blocker = null;
+        Task<bool> operation = null;
+        Task kill = null;
+        try {
+            await ((IExportAndVary<Win32InteropServicesVariable>)services).Vary(
+                new Win32InteropServicesVariable { ThreadPool = pool }, CancellationToken.None);
+            blocker = pool.Work(
+                name: "BlockBatch",
+                work: () => {
+                    workerStarted.Set();
+                    if (!releaseWorker.Wait(TimeSpan.FromSeconds(10))) {
+                        throw new TimeoutException("The queued batch was not released.");
+                    }
+                },
+                cancellationToken: CancellationToken.None);
+            Assert.That(workerStarted.Wait(TimeSpan.FromSeconds(10)), Is.True);
+
+            var batch = ((IWin32InteropServices)services).FileOperation(Environment.CurrentDirectory);
+            var previousContext = SynchronizationContext.Current;
+            try {
+                SynchronizationContext.SetSynchronizationContext(context);
+                operation = batch.Operate(progress: null, token: CancellationToken.None);
+            }
+            finally {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+            }
+            kill = Task.Factory.StartNew(
+                () => ((IExportAndKill)services).Kill(),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+
+            releaseWorker.Set();
+            await blocker;
+            var shutdown = Task.WhenAll(operation, kill);
+            var completion = await Task.WhenAny(shutdown, Task.Delay(TimeSpan.FromSeconds(2)));
+
+            Assert.That(
+                completion,
+                Is.SameAs(shutdown),
+                "Batch completion or shutdown waited for the caller's synchronization context.");
+            Assert.That(await operation, Is.False);
+        }
+        finally {
+            releaseWorker.Set();
+            if (blocker is not null) {
+                await blocker;
+            }
+            if (operation is not null && !operation.IsCompleted) {
+                var cleanupDeadline = DateTime.UtcNow.AddSeconds(10);
+                while (!operation.IsCompleted && DateTime.UtcNow < cleanupDeadline) {
+                    context.RunPostedCallbacks();
+                    await Task.Delay(10);
+                }
+            }
+            if (operation is not null) {
+                await operation;
+            }
+            if (kill is null) {
+                kill = Task.Factory.StartNew(
+                    () => ((IExportAndKill)services).Kill(),
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
+            }
+            var killCompletion = await Task.WhenAny(kill, Task.Delay(TimeSpan.FromSeconds(10)));
+            context.RunPostedCallbacks();
+            Assert.That(killCompletion, Is.SameAs(kill), "Shutdown did not finish during test cleanup.");
+            await kill;
+            pool.Empty();
+        }
+    }
+
     [Test]
     public void UseServices_WhenInnerTaskCompletesUnderCallerContext_DoesNotPostContinuation() {
         var services = new Win32InteropServices();

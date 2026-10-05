@@ -34,12 +34,7 @@ public sealed class Win32ShellService : Win32BaseService {
         };
         var success = shell32.ShellExecuteExW(ref info);
         if (success == false) {
-            // hInstApp holds the SE_ERR_* result of the call (values <= 32); the ambient
-            // thread error can be unrelated, for instance ERROR_CANCELLED when NO_UI
-            // suppresses an interaction the Shell wanted to show.
-            var hInstApp = info.hInstApp.ToInt64();
-            var error = hInstApp is >= 0 and <= 32 ? (int)hInstApp : Marshal.GetLastWin32Error();
-            throw new Win32Exception(error);
+            throw new Win32Exception(Marshal.GetLastWin32Error());
         }
     }
 
