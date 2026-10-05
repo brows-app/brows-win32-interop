@@ -1,4 +1,6 @@
 ﻿using Brows.Composition;
+using Brows.Threading;
+using Brows.Win32.Win32FileOperations;
 using System;
 using System.ComponentModel;
 using System.IO;
@@ -130,6 +132,76 @@ public sealed class KernelShutdownTest {
                 TaskCreationOptions.LongRunning,
                 TaskScheduler.Default);
         }
+    }
+
+    [Test]
+    public async Task Kill_WhenFileOperationBatchIsPending_WaitsForItToFinish() {
+        var pool = new STAThreadPool(nameof(Win32InteropServices)) {
+            WorkerCountMax = 1,
+        };
+        try {
+            Services = new();
+            ((IExportAndVary<Win32InteropServicesVariable>)Services).Vary(
+                new Win32InteropServicesVariable { ThreadPool = pool },
+                CancellationToken.None);
+            var source = Path.Combine(TempDirectory, "source.txt");
+            File.WriteAllText(source, "source");
+            using var workerStarted = new ManualResetEventSlim();
+            using var releaseWorker = new ManualResetEventSlim();
+            var blocker = pool.Work(
+                name: "BlockBatch",
+                work: () => {
+                    workerStarted.Set();
+                    if (!releaseWorker.Wait(TimeSpan.FromSeconds(10))) {
+                        throw new TimeoutException("The queued blocker was not released.");
+                    }
+                },
+                cancellationToken: CancellationToken.None);
+            Assert.That(workerStarted.Wait(TimeSpan.FromSeconds(10)), Is.True);
+            var batch = ((IWin32InteropServices)Services).FileOperation(TempDirectory);
+            batch.CopyFiles.Add(new CopyFile { Path = source });
+            batch.NoConfirmation = true;
+            batch.NoErrorUI = true;
+            batch.Silent = true;
+            var operate = batch.Operate(progress: null, token: CancellationToken.None);
+            var kill = Task.Factory.StartNew(
+                () => ((IExportAndKill)Services).Kill(),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+            try {
+                var killCompletion = await Task.WhenAny(kill, Task.Delay(TimeSpan.FromMilliseconds(500)));
+                Assert.That(
+                    killCompletion,
+                    Is.Not.SameAs(kill),
+                    "Shutdown returned while a file-operation batch was pending.");
+            }
+            finally {
+                releaseWorker.Set();
+                var cleanup = Task.WhenAll(blocker, operate, kill);
+                var cleanupCompletion = await Task.WhenAny(cleanup, Task.Delay(TimeSpan.FromSeconds(15)));
+                Assert.That(
+                    cleanupCompletion,
+                    Is.SameAs(cleanup),
+                    "Shutdown did not finish after the batch completed.");
+                await cleanup;
+            }
+        }
+        finally {
+            pool.Empty();
+        }
+    }
+
+    [Test]
+    public void Operate_WhenServicesWereKilled_ThrowsInvalidOperationException() {
+        var services = new Win32InteropServices();
+        ((IExportAndVary<Win32InteropServicesVariable>)services).Vary(null, CancellationToken.None);
+        var batch = ((IWin32InteropServices)services).FileOperation(TempDirectory);
+        ((IExportAndKill)services).Kill();
+
+        Assert.That(
+            async () => await batch.Operate(progress: null, token: CancellationToken.None),
+            Throws.TypeOf<InvalidOperationException>());
     }
 
     [Test]

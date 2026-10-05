@@ -9,8 +9,8 @@ dismissed by verification and are not listed: the `FILE_INFORMATION_CLASS` numbe
 `IFileOperationProgressSink` (they match the Shell declarations).
 
 P1 means high priority, P2 means medium priority, and P3 means low priority. Findings 1-22 were resolved in earlier
-reviews and are not renumbered or reused. The new findings are **23-32**, all open. No production code was changed
-during this review.
+reviews and are not renumbered or reused. The new findings are **23-32**; all have since been resolved. No production
+code was changed during this review itself.
 
 ## Findings
 
@@ -33,21 +33,29 @@ facade without it is a contract violation that now fails fast. A `ThreadPoolNotN
 per the contract, and regression coverage locks the behavior in
 (`FileOperation_WhenVaryWasNotCalled_ThrowsInvalidOperationException` and `FileOperation_WhenVaryWasCalled_ReturnsOperation`).
 
-### 24. [P1] File-operation batches are invisible to facade shutdown
+### 24. [P1] [Resolved] File-operation batches are invisible to facade shutdown
 
 **Location:** [Win32InteropServices.cs:130](source/Brows.Win32.Interop.Composition/Win32/Win32InteropServices.cs#L130)
 and [Win32FileOperation.cs:298-330](source/Brows.Win32.Interop.Operations/Win32/Win32FileOperation.cs#L298).
 
 `FileOperation` does not check `Killed`, and `Win32FileOperation.Operate` queues its work directly onto the STA pool
-without entering the facade's `ActiveFacadeOperations` accounting. `Kill` therefore proceeds while a batch created
-before shutdown is still queued or running, then calls `threadPool.Empty()` on the owned pool. Per the
-`STAThreadPool.Empty` contract, workers exit their message loops; queued-but-not-started batch work never runs and
-its returned task is orphaned. After `Kill`, `FileOperation` also keeps returning batches on a killed pool instead of
-throwing `InvalidOperationException` like every other facade method.
+without entering the facade's active-operation accounting. `Kill` therefore proceeded while a batch created before
+shutdown was still queued or running, then called `threadPool.Empty()` on the owned pool. Per the `STAThreadPool.Empty`
+contract, workers exit their message loops; queued-but-not-started batch work never ran and its returned task was
+orphaned. After `Kill`, `FileOperation` also kept returning batches on a killed pool instead of throwing
+`InvalidOperationException` like every other facade method.
 
-Resolve by routing batch execution through the same admission the other facade methods use: track each `Operate` call
-in `ActiveFacadeOperations` (or an equivalent registration) so `Kill` waits for admitted batches, and make
-`FileOperation` reject calls once `Killed` is set.
+Resolved by routing batch execution through the same admission the other facade methods use. `Win32FileOperation` grew
+internal `OnOperationStarting`/`OnOperationFinished` callbacks that the facade wires up when it creates a batch:
+`OnOperationStarting` runs synchronously in `Operate` before work is queued and rejects the batch with
+`InvalidOperationException` once shutdown has started or finished, and `OnOperationFinished` decrements the facade's
+active-operation count and pulses the shutdown wait, so `Kill` now waits for in-flight batches the same way it waits
+for other facade operations. `Kill` also no longer empties caller-owned pools. Covered by red/green regression tests in
+`KernelShutdownTest`: `Kill_WhenFileOperationBatchIsPending_WaitsForItToFinish` (verified red pre-fix by stashing the
+production change with the tests in tree) and `Operate_WhenServicesWereKilled_ThrowsInvalidOperationException`. The
+batch in the kill test sets `NoConfirmation`, `NoErrorUI`, and `Silent` so the Shell shows no UI during the run;
+without those flags the test wedged for minutes on an unattended Shell progress dialog on the desktop, which also
+slowed the whole suite. The full test suite passes on all target frameworks after the change.
 
 ### 25. [P1] [Resolved] Owner-window lookup can deadlock the STA worker against the UI thread
 
@@ -92,17 +100,20 @@ and a red/green demonstration was not reproducible in that path (a probe of the 
 `ERROR_CANCELLED` scenario found that Windows 11 returns success there instead of failing); the regression test
 locks the reported code regardless of which source happens to be read.
 
-### 27. [P2] Unadvise failure in finally replaces the batch's real exception
+### 27. [P2] [Resolved] Unadvise failure in finally replaces the batch's real exception
 
 **Location:** [Win32FileOperation.cs:156-159](source/Brows.Win32.Interop.Operations/Win32/Win32FileOperation.cs#L156).
 
-`Work` ends with `hr = FileOperation.Unadvise(progressSinkCookie); hr.ThrowOnError();` inside a `finally` block. If
-the `try` block is already unwinding - `PerformOperations` failed with its HRESULT, or the cancellation check at line
-145 threw - and `Unadvise` then fails (which is plausible after an aborted operation), the throw in `finally`
-discards the original exception and the caller diagnoses the unadvising failure instead of the real one.
+`Work` ended with `hr = FileOperation.Unadvise(progressSinkCookie); hr.ThrowOnError();` inside a `finally` block. If
+the `try` block was already unwinding - `PerformOperations` failed with its HRESULT, or the cancellation check threw -
+and `Unadvise` then failed (which is plausible after an aborted operation), the throw in `finally` discarded the
+original exception and the caller diagnosed the unadvising failure instead of the real one.
 
-Resolve by not throwing from `finally`: log the `Unadvise` failure (the batch already has an `ILog`) or capture the
-HRESULT for the success path only.
+Resolved by not throwing from `finally`: the `Unadvise` call and its `ThrowOnError` are wrapped in a `try`/`catch`
+that logs the failure through the batch's existing `ILog` as a warning, so the in-flight exception from
+`PerformOperations` or the cancellation check always propagates. A deterministic red/green test was not added because
+forcing `Unadvise` to fail cannot be made reliable; the fix was verified by inspection and by the full suite passing
+on all target frameworks after the change.
 
 ### 28. [P2] [Resolved] Cancellation after PerformOperations reports completed work as canceled
 
@@ -159,14 +170,17 @@ so its all-`S_OK` default bodies exist only as a base.
 Resolved by declaring it `abstract` (its `virtual` members keep their default bodies), which also prevents
 accidental direct use of a sink that reports success for every callback.
 
-### 32. [P3] Dead local and dead null-check in Win32FileOperation
+### 32. [P3] [Resolved] Dead local and dead null-check in Win32FileOperation
 
 **Location:** [Win32FileOperation.cs:69-72](source/Brows.Win32.Interop.Operations/Win32/Win32FileOperation.cs#L72) and
 [Win32FileOperation.cs:30-42](source/Brows.Win32.Interop.Operations/Win32/Win32FileOperation.cs#L37).
 
-`Copy()` computes `var fileDir = Path.GetDirectoryName(path);` and never uses it, implying a destination-directory
-behavior that does not exist. In `Iterate`, `act?.Invoke(item)` is a dead null-check because `act` is never null.
-Resolve by deleting the `fileDir` line and invoking `act(item)` directly.
+`Copy()` computed `var fileDir = Path.GetDirectoryName(path);` and never used it, implying a destination-directory
+behavior that does not exist. In `Iterate`, `act?.Invoke(item)` was a dead null-check because `act` is never null.
+
+Resolved by deleting the `fileDir` line and invoking `act(item)` directly; `Iterate` now validates its `act` parameter
+with `ArgumentNullException` up front, replacing the dead null-propagation with a clear contract check. The full
+Operations suite passes on all target frameworks after the change.
 
 ## Validation
 

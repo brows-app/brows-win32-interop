@@ -28,13 +28,22 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
     private ShellItemWrapper _DirectoryWrap;
 
     private bool Iterate<T>(IReadOnlyList<T> list, Action<T> act) {
-        if (list == null) return false;
-        if (list.Count == 0) return false;
+        if (act is null) {
+            throw new ArgumentNullException(nameof(act));
+        }
+        if (list is null) {
+            return false;
+        }
+        if (list.Count == 0) {
+            return false;
+        }
         var acted = false;
         foreach (var item in list) {
-            CancellationToken.ThrowIfCancellationRequested();
-            if (item != null) {
-                act?.Invoke(item);
+            if (CancellationToken.IsCancellationRequested) {
+                CancellationToken.ThrowIfCancellationRequested();
+            }
+            if (item is not null) {
+                act(item);
                 acted = true;
             }
         }
@@ -69,7 +78,6 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
     private bool Copy() {
         return Iterate(CopyFiles, item => {
             var path = item.Path;
-            var fileDir = Path.GetDirectoryName(path);
             using (var itemWrap = new ShellItemWrapper(path)) {
                 var hr = itemWrap.UseShellItem(pathItem => {
                     return DirectoryWrap.UseShellItem(directoryItem => {
@@ -112,7 +120,9 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
     }
 
     private bool Work() {
-        CancellationToken.ThrowIfCancellationRequested();
+        if (CancellationToken.IsCancellationRequested) {
+            CancellationToken.ThrowIfCancellationRequested();
+        }
         using (var fopw = new FileOperationWrapper()) {
             return fopw.UseFileOperation(fop => {
                 FileOperation = fop;
@@ -155,12 +165,24 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
                     return true;
                 }
                 finally {
-                    hr = FileOperation.Unadvise(progressSinkCookie);
-                    hr.ThrowOnError();
+                    try {
+                        hr = FileOperation.Unadvise(progressSinkCookie);
+                        hr.ThrowOnError();
+                    }
+                    catch (Exception ex) {
+                        if (Log.Warn()) {
+                            Log.Warn(
+                                $"Failure during {nameof(IFileOperation)}.{nameof(IFileOperation.Unadvise)}.", ex);
+                        }
+                    }
                 }
             });
         }
     }
+
+    internal Action OnOperationStarting { get; set; }
+
+    internal Action OnOperationFinished { get; set; }
 
     internal uint FlagsInit() {
         var fof = FOF.NOCONFIRMMKDIR;
@@ -316,6 +338,8 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
             DeleteFiles = _DeleteFiles?.ToList(),
             EarlyFailure = EarlyFailure,
             OnGetOwnerWindow = OnGetOwnerWindow,
+            OnOperationFinished = OnOperationFinished,
+            OnOperationStarting = OnOperationStarting,
             MoveFiles = _MoveFiles?.ToList(),
             NoConfirmation = NoConfirmation,
             NoErrorUI = NoErrorUI,
@@ -326,6 +350,10 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
             RenameOnCollision = RenameOnCollision,
             Silent = Silent
         };
+        var onOperationStarting = agent.OnOperationStarting;
+        if (onOperationStarting is not null) {
+            onOperationStarting();
+        }
         var work = ThreadPool.Work(
                 name: nameof(Win32FileOperation),
                 work: agent.Work,
@@ -334,9 +362,10 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
             return await work;
         }
         finally {
-            var directoryWrap = agent._DirectoryWrap;
-            if (directoryWrap != null) {
-                directoryWrap.Dispose();
+            using var _ = agent._DirectoryWrap;
+            var onOperationFinished = agent.OnOperationFinished;
+            if (onOperationFinished is not null) {
+                onOperationFinished();
             }
         }
     }

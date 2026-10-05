@@ -149,7 +149,21 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
 
     IWin32FileOperation IWin32InteropServices.FileOperation(string directory) {
         return new Win32FileOperation(directory, ThreadPoolNotNull) {
-            OnGetOwnerWindow = OnGetOwnerWindow
+            OnGetOwnerWindow = OnGetOwnerWindow,
+            OnOperationFinished = () => {
+                lock (Locker) {
+                    ActiveOperationCount--;
+                    Monitor.PulseAll(Locker);
+                }
+            },
+            OnOperationStarting = () => {
+                lock (Locker) {
+                    if (Killing || Killed) {
+                        throw new InvalidOperationException("The Win32 interop services have already been killed.");
+                    }
+                    ActiveOperationCount++;
+                }
+            }
         };
     }
 
