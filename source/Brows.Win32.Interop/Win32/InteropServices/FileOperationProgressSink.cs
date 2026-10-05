@@ -3,7 +3,7 @@ using Brows.Win32.PlatformInvoke;
 
 namespace Brows.Win32.InteropServices;
 
-internal class FileOperationProgressSink : IFileOperationProgressSink {
+internal abstract class FileOperationProgressSink : IFileOperationProgressSink {
     private const HRESULT S_OK = HRESULT.S_OK;
 
     public virtual HRESULT StartOperations() {

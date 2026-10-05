@@ -34,7 +34,7 @@ public sealed class Win32ShellService : Win32BaseService {
         };
         var success = shell32.ShellExecuteExW(ref info);
         if (success == false) {
-            throw new Win32Exception();
+            throw new Win32Exception(Marshal.GetLastWin32Error());
         }
     }
 
@@ -150,7 +150,7 @@ public sealed class Win32ShellService : Win32BaseService {
                 cancellationToken.ThrowIfCancellationRequested();
             }
             var ext = Path.GetExtension(file);
-            if (ext?.EndsWith("lnk", StringComparison.OrdinalIgnoreCase) != true) {
+            if (ext?.Equals(".lnk", StringComparison.OrdinalIgnoreCase) != true) {
                 return null;
             }
             try {

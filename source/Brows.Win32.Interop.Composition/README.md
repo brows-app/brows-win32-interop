@@ -53,6 +53,22 @@ whether the target exists. Cancellation is propagated through the returned task.
 Use `FileOperation(directory)` to create and execute a batch of Shell file operations. See
 [`Brows.Win32.Interop.Operations`](../Brows.Win32.Interop.Operations/README.md) for batch configuration and progress.
 
+### File-operation owner window
+
+To make Shell UI for file-operation batches owned by an application window, configure
+`Win32InteropServicesVariable.OnGetOwnerWindow` through the host's Brows.Composition variable configuration before
+the export creates its services:
+
+```csharp
+var variable = new Win32InteropServicesVariable {
+    OnGetOwnerWindow = () => ownerWindowHandle,
+};
+```
+
+Supply `variable` to the host's configuration for this export. The callback applies to batches created by the
+export, runs on an STA worker during `Operate`, and must return promptly without synchronously waiting on a thread
+that could be waiting for the batch. Return `IntPtr.Zero` to run Shell UI without an owner window.
+
 ## License
 
 MIT.

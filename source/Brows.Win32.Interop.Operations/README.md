@@ -35,7 +35,7 @@ finally {
 
 The `Operate` result is `false` for an empty batch and `true` when a nonempty batch reaches native execution; it does not report the result of each item. Errors are surfaced by the returned task. The cancellation token is checked before and during queueing and at Shell progress callbacks. Work runs on the supplied `STAThreadPool`, which the caller owns.
 
-Options such as `Silent`, `NoConfirmation`, `RenameOnCollision`, and `RecycleOnDelete` control Windows Shell behavior. With the default `Silent = false`, Windows can show its own progress UI. To receive progress through `IOperationProgress`, set `Silent = true` and pass a progress receiver to `Operate`.
+Options such as `Silent`, `NoConfirmation`, `RenameOnCollision`, and `RecycleOnDelete` control Windows Shell behavior. With the default `Silent = false`, Windows can show its own progress UI. To receive progress through `IOperationProgress`, set `Silent = true` and pass a progress receiver to `Operate`. For batches created through the Composition export, configure the Shell UI owner window with `Win32InteropServicesVariable.OnGetOwnerWindow` before the export creates its services. See the [Composition README](../Brows.Win32.Interop.Composition/README.md#file-operation-owner-window) for setup. The callback runs on the STA worker during `Operate` and must not synchronously wait on a thread that could be waiting for the batch.
 
 ## License
 
