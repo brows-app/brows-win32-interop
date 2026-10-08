@@ -5,20 +5,25 @@ nearby implementation and tests before making changes.
 
 ## Solution layout
 
-- `brows-win32-interop.slnx` is the solution containing both packages and both
-  test projects.
+- `brows-win32-interop.slnx` is the solution containing the three package
+  projects and their three matching test projects.
 - `source/Brows.Win32.Interop/` contains the core Win32 and COM interop package.
   `Win32/` holds the higher-level services, `Win32/PlatformInvoke/` contains
   native declarations and structures, and `Win32/InteropServices/` contains COM
   wrappers and the `ComTypes/` declarations. Its `README.md` documents the
   package and public services.
+- `source/Brows.Win32.Interop.Composition/` contains the Brows.Composition
+  exports for the core services and batched file operations. Its `README.md`
+  documents package use.
 - `source/Brows.Win32.Interop.Operations/` contains batched Windows Shell file
   operations. `Win32/Win32FileOperation.cs` coordinates a batch,
   `Win32/Win32FileOperations/` contains the operation item types, and
   `Win32/Win32ProgressSink.cs` handles Shell progress callbacks. Its `README.md`
   documents package use.
 - `tests/Brows.Win32.Interop.Tests/Win32/` contains tests for the core services.
-  `tests/Brows.Win32.Interop.Operations.Tests/Win32/` contains file-operation
+- `tests/Brows.Win32.Interop.Composition.Tests/Win32/` contains tests for the
+  Composition exports.
+- `tests/Brows.Win32.Interop.Operations.Tests/Win32/` contains file-operation
   tests, with item tests under `Win32/Win32FileOperations/`.
 - `Directory.Build.props` and `Directory.Packages.props` hold shared build
   settings and centrally managed package versions. `source/Directory.Build.props`
