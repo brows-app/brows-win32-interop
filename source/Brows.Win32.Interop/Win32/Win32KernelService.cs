@@ -37,11 +37,11 @@ public sealed class Win32KernelService : Win32BaseService {
             StringComparison.OrdinalIgnoreCase);
     }
 
-    internal Win32KernelService(Win32ConsoleCoordinator consoleCoordinator) {
-        ConsoleCoordinator = consoleCoordinator ?? throw new ArgumentNullException(nameof(consoleCoordinator));
+    private protected sealed override void DisposeCore() {
     }
 
-    private protected sealed override void DisposeCore() {
+    internal Win32KernelService(Win32ConsoleCoordinator consoleCoordinator) {
+        ConsoleCoordinator = consoleCoordinator ?? throw new ArgumentNullException(nameof(consoleCoordinator));
     }
 
     /// <summary>

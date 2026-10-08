@@ -78,10 +78,9 @@ internal sealed class Win32ConsoleNative : IWin32ConsoleNative {
         return new SafeFileHandle(duplicate, ownsHandle: true);
     }
 
-    bool IWin32ConsoleNative.AreSameHandle(
-        SafeFileHandle knownObject,
-        IntPtr knownValue,
-        IntPtr candidate) {
+    bool IWin32ConsoleNative.AreSameHandle(SafeFileHandle knownObject,
+                                           IntPtr knownValue,
+                                           IntPtr candidate) {
         var knownObjectIsUsable = knownObject is not null && !knownObject.IsClosed && !knownObject.IsInvalid;
         if (!knownObjectIsUsable) {
             var sameNumericValue = knownValue == candidate;
