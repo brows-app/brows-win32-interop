@@ -36,6 +36,14 @@ string targetPath = await shell.GetLinkPath(shortcutPath, CancellationToken.None
 
 `GetStoredPath` returns an absolute path with the stored casing of each existing file or directory component beneath the volume or share root. Relative paths are resolved against the current directory, while the root spelling is retained from that resolved path. The path and its components must exist and be accessible; invalid paths throw `ArgumentException`, and native lookup failures throw `Win32Exception`.
 
+Short (8.3) names expand to their stored long names. Native lookups of ordinary drive and UNC paths support long
+paths without requiring the host's Win32 long-path opt-in; managed runtime path-validation settings still apply.
+Explicit extended paths (`\\?\C:\...` or `\\?\UNC\server\share\...`) retain their prefix and Windows semantics:
+use backslashes and omit `.` and `..` navigation. Bare device objects are rejected with `ArgumentException`.
+Alternate data streams are unsupported; an ordinary ADS path throws `NotSupportedException` on .NET Framework
+and a native lookup failure throws `Win32Exception`. Paths exceeding the runtime's permitted length throw
+`PathTooLongException`.
+
 `ExecuteDefault` runs the default Shell verb for a path. Its overload `ExecuteDefault(file, with, cancellationToken)` opens `file` with the specified executable. `ExecuteProperties` opens the Properties verb. These methods return `Task`; await them to observe errors. Shell work runs on an STA worker. An optional cancellation token can stop work before dispatch, but cannot interrupt a native Shell call already in progress.
 
 `GetLinkPath` resolves a `.lnk` shortcut and returns its target path, or `null` for a non-shortcut or a lookup failure. Cancellation is propagated. `Win32ShellService` can use a supplied `Brows.Threading.STAThreadPool`; passing `null` creates a pool owned by the service. Dispose the service after its operations finish.

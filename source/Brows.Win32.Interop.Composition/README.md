@@ -55,6 +55,14 @@ volume or share root. The root spelling comes from the resolved input path. The 
 able to enumerate its components. Relative paths are resolved against the current directory. Cancellation can stop
 the lookup before it starts, but cannot interrupt a native directory query already in progress.
 
+Short (8.3) names expand to their stored long names. Native lookups of ordinary drive and UNC paths support long
+paths without requiring the host's Win32 long-path opt-in; managed runtime path-validation settings still apply.
+Explicit extended paths (`\\?\C:\...` or `\\?\UNC\server\share\...`) retain their prefix and Windows semantics:
+use backslashes and omit `.` and `..` navigation. Bare device objects are rejected with `ArgumentException`.
+Alternate data streams are unsupported; an ordinary ADS path throws `NotSupportedException` on .NET Framework
+and a native lookup failure throws `Win32Exception`. Paths exceeding the runtime's permitted length throw
+`PathTooLongException`.
+
 Use `FileOperation(directory)` to create and execute a batch of Shell file operations. See
 [`Brows.Win32.Interop.Operations`](../Brows.Win32.Interop.Operations/README.md) for batch configuration and progress.
 

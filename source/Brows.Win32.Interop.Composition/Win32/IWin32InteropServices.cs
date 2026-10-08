@@ -124,12 +124,23 @@ public interface IWin32InteropServices : IExport {
     /// </returns>
     /// <remarks>
     /// Relative paths are resolved against the current directory. The root spelling comes from that resolved path.
+    /// Short (8.3) names are expanded to their stored long names. Native lookups of ordinary drive and UNC paths
+    /// use extended-length paths, without requiring the host to opt in to Win32 long-path support.
+    /// Explicit extended paths retain Windows extended-path semantics: use backslashes and omit . and .. navigation.
+    /// Bare device objects and alternate data streams are not supported. Managed path validation, including
+    /// .NET Framework host path-handling settings, still applies.
     /// </remarks>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="path"/> is <see langword="null"/>.
     /// </exception>
     /// <exception cref="ArgumentException">
-    /// <paramref name="path"/> is invalid or contains wildcards.
+    /// <paramref name="path"/> is invalid, contains wildcards, or identifies a non-file-system device.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The runtime rejects the path format, such as an alternate data stream path on .NET Framework.
+    /// </exception>
+    /// <exception cref="PathTooLongException">
+    /// The path exceeds the runtime's permitted length.
     /// </exception>
     /// <exception cref="Win32Exception">
     /// The path cannot be opened or a path component cannot be found or enumerated.

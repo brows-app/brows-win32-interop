@@ -43,12 +43,23 @@ public sealed class Win32KernelService : Win32BaseService {
     /// </returns>
     /// <remarks>
     /// Relative paths are resolved against the current directory. The root spelling comes from that resolved path.
+    /// Short (8.3) names are expanded to their stored long names. Native lookups of ordinary drive and UNC paths
+    /// use extended-length paths, without requiring the host to opt in to Win32 long-path support.
+    /// Explicit extended paths retain Windows extended-path semantics: use backslashes and omit . and .. navigation.
+    /// Bare device objects and alternate data streams are not supported. Managed path validation, including
+    /// .NET Framework host path-handling settings, still applies.
     /// </remarks>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="path"/> is <see langword="null"/>.
     /// </exception>
     /// <exception cref="ArgumentException">
-    /// <paramref name="path"/> is invalid or contains wildcards.
+    /// <paramref name="path"/> is invalid, contains wildcards, or identifies a non-file-system device.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The runtime rejects the path format, such as an alternate data stream path on .NET Framework.
+    /// </exception>
+    /// <exception cref="PathTooLongException">
+    /// The path exceeds the runtime's permitted length.
     /// </exception>
     /// <exception cref="Win32Exception">
     /// The path cannot be opened or a path component cannot be found or enumerated.
@@ -73,16 +84,47 @@ public sealed class Win32KernelService : Win32BaseService {
             if (string.IsNullOrEmpty(rootPath)) {
                 throw new ArgumentException("The path must have a root.", nameof(path));
             }
-            var wildcardSearchStart = fullPath.StartsWith(@"\\?\", StringComparison.Ordinal) ? 4 : 0;
+            var pathIsExtended = fullPath.StartsWith(@"\\?\", StringComparison.Ordinal);
+            var pathIsDevice = fullPath.StartsWith(@"\\.\", StringComparison.Ordinal);
+            var rootHasDevicePrefix = pathIsExtended || pathIsDevice;
+            if (rootHasDevicePrefix) {
+                var deviceRoot = rootPath.Substring(4).TrimEnd(Path.DirectorySeparatorChar);
+                var rootIsDrive = deviceRoot.Length == 2
+                    && char.IsLetter(deviceRoot[0])
+                    && deviceRoot[1] == Path.VolumeSeparatorChar;
+                var rootIsShare = deviceRoot.StartsWith(@"UNC\", StringComparison.OrdinalIgnoreCase);
+                var rootIsVolume = deviceRoot.StartsWith("Volume{", StringComparison.OrdinalIgnoreCase)
+                    && Guid.TryParse(deviceRoot.Substring(6), out _);
+                var rootIsFileSystem = rootIsDrive || rootIsShare || rootIsVolume;
+                if (!rootIsFileSystem) {
+                    throw new ArgumentException(
+                        "The path must identify a file-system file or directory.",
+                        nameof(path));
+                }
+            }
+            var wildcardSearchStart = pathIsExtended ? 4 : 0;
             var pathHasWildcards = fullPath.IndexOf('*') >= 0 || fullPath.IndexOf('?', wildcardSearchStart) >= 0;
             if (pathHasWildcards) {
                 throw new ArgumentException("The path must not contain wildcard characters.", nameof(path));
             }
+            var rootLength = rootPath.Length;
+            var rootSeparatorIsMissing = rootLength < fullPath.Length
+                && fullPath[rootLength] == Path.DirectorySeparatorChar;
+            if (rootSeparatorIsMissing) {
+                rootPath += Path.DirectorySeparatorChar;
+                rootLength++;
+            }
             var storedPath = rootPath;
-            var pathIsRoot = fullPath.Length == rootPath.Length;
+            var nativePath = rootPath;
+            if (!rootHasDevicePrefix) {
+                nativePath = rootPath.StartsWith(@"\\", StringComparison.Ordinal)
+                    ? @"\\?\UNC\" + rootPath.Substring(2)
+                    : @"\\?\" + rootPath;
+            }
+            var pathIsRoot = fullPath.Length == rootLength;
             if (pathIsRoot) {
                 using (var hRoot = kernel32.CreateFileW(
-                    rootPath,
+                    nativePath,
                     0,
                     FileShare.ReadWrite | FileShare.Delete,
                     IntPtr.Zero,
@@ -95,25 +137,37 @@ public sealed class Win32KernelService : Win32BaseService {
                 }
                 return storedPath;
             }
-            var components = fullPath.Substring(rootPath.Length).Split(Path.DirectorySeparatorChar);
+            var components = fullPath.Substring(rootLength).Split(Path.DirectorySeparatorChar);
             foreach (var component in components) {
                 if (string.IsNullOrEmpty(component)) {
                     continue;
                 }
+                /*
+                 * Extended queries bypass Win32's trimming of ordinary components. GetFullPath can leave
+                 * trailing periods and spaces on intermediate components, so retain that lookup behavior here.
+                 */
+                var queryComponent = rootHasDevicePrefix ? component : component.TrimEnd(' ', '.');
                 var findHandle = kernel32.FindFirstFileW(
-                    Path.Combine(storedPath, component),
+                    appendComponent(nativePath, queryComponent),
                     out var findData);
                 if (findHandle == new IntPtr(-1)) {
                     throw new Win32Exception();
                 }
                 try {
-                    storedPath = Path.Combine(storedPath, findData.FileName);
+                    storedPath = appendComponent(storedPath, findData.FileName);
+                    nativePath = appendComponent(nativePath, findData.FileName);
                 }
                 finally {
                     kernel32.FindClose(findHandle);
                 }
             }
             return storedPath;
+        }
+        static string appendComponent(string directory, string component) {
+            if (directory[directory.Length - 1] == Path.DirectorySeparatorChar) {
+                return directory + component;
+            }
+            return directory + Path.DirectorySeparatorChar + component;
         }
     }
 

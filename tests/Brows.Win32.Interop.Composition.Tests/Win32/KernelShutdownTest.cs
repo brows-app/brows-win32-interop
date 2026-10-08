@@ -225,6 +225,46 @@ public sealed class KernelShutdownTest {
     }
 
     [Test]
+    public async Task GetStoredPath_WhenFileExists_ReturnsStoredPath() {
+        var file = Path.Combine(TempDirectory, "MixedCaseFile.txt");
+        File.WriteAllText(file, "probe");
+        using var kernel = new Win32KernelService();
+        var expected = Path.Combine(kernel.GetStoredPath(TempDirectory), "MixedCaseFile.txt");
+
+        var result = await ((IWin32InteropServices)Services).GetStoredPath(
+            Path.Combine(TempDirectory, "mixedcasefile.TXT"), CancellationToken.None);
+
+        Assert.That(result, Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void GetStoredPath_WhenPathDoesNotExist_ThrowsWin32Exception() {
+        Assert.That(
+            async () => await ((IWin32InteropServices)Services).GetStoredPath(
+                Path.Combine(TempDirectory, "missing"), CancellationToken.None),
+            Throws.TypeOf<Win32Exception>());
+    }
+
+    [Test]
+    public void GetStoredPath_WhenTokenIsCanceled_ReturnsCanceledTask() {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.That(
+            async () => await ((IWin32InteropServices)Services).GetStoredPath(null, cancellation.Token),
+            Throws.InstanceOf<OperationCanceledException>());
+    }
+
+    [Test]
+    public void GetStoredPath_AfterKill_ThrowsInvalidOperationException() {
+        ((IExportAndKill)Services).Kill();
+
+        Assert.That(
+            () => ((IWin32InteropServices)Services).GetStoredPath(TempDirectory, CancellationToken.None),
+            Throws.TypeOf<InvalidOperationException>());
+    }
+
+    [Test]
     public async Task PathsAreEquivalent_WhenPathsIdentifySameDirectory_ReturnsTrue() {
         var result = await ((IWin32InteropServices)Services).PathsAreEquivalent(
             TempDirectory,
