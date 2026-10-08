@@ -1,11 +1,13 @@
 ﻿using Microsoft.Win32.SafeHandles;
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Brows.Win32.PlatformInvoke;
 
+[SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "N/A")]
 internal partial class kernel32 {
     public delegate PROGRESS ProgressRoutine(
         long TotalFileSize,
@@ -100,8 +102,7 @@ internal partial class kernel32 {
     public static extern IntPtr FindFirstChangeNotificationW(
       [In] string lpPathName,
       [In] bool bWatchSubtree,
-      [In, MarshalAs(UnmanagedType.U4)] FILE_NOTIFY_CHANGE dwNotifyFilter
-    );
+      [In, MarshalAs(UnmanagedType.U4)] FILE_NOTIFY_CHANGE dwNotifyFilter);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool FindNextChangeNotification([In] IntPtr hChangeHandle);
@@ -118,8 +119,7 @@ internal partial class kernel32 {
       [In] uint dwNotifyFilter,
       [Out, Optional] out uint lpBytesReturned,
       [In, Out, Optional] IntPtr lpOverlapped,
-      [In, Optional] IntPtr lpCompletionRoutine
-    );
+      [In, Optional] IntPtr lpCompletionRoutine);
 
     [DllImport("kernel32.dll")]
     public static extern bool AllocConsole();

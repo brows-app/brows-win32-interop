@@ -1,7 +1,9 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 
 namespace Brows.Win32.PlatformInvoke;
 
+[SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "N/A")]
 internal static class ntdll {
     [DllImport("ntdll.dll")]
     [return: MarshalAs(UnmanagedType.U4)]

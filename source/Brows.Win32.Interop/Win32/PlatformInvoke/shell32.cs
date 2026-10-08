@@ -1,8 +1,10 @@
 ﻿using Brows.Win32.InteropServices.ComTypes;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 
 namespace Brows.Win32.PlatformInvoke;
 
+[SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "N/A")]
 internal static class shell32 {
     public const int MAX_PATH = 260;
 
