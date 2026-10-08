@@ -141,7 +141,7 @@ public sealed class KernelShutdownTest {
         };
         try {
             Services = new();
-            ((IExportAndVary<Win32InteropServicesVariable>)Services).Vary(
+            await ((IExportAndVary<Win32InteropServicesVariable>)Services).Vary(
                 new Win32InteropServicesVariable { ThreadPool = pool },
                 CancellationToken.None);
             var source = Path.Combine(TempDirectory, "source.txt");
