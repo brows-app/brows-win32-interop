@@ -1,6 +1,6 @@
 # Brows.Win32.Interop
 
-Windows Shell and file-system interop for .NET. This package provides higher-level services for Shell execution, shortcut resolution, file identity, stored path casing, and directory case-sensitivity checks, plus lower-level Win32 and COM bindings used by other Brows packages.
+Windows Shell and file-system interop for .NET. This package provides higher-level services for Shell execution, shortcut resolution, file identity, stored path casing, directory case-sensitivity checks, and explicit diagnostic console management, plus lower-level Win32 and COM bindings used by other Brows packages.
 
 ## Install
 
@@ -47,6 +47,64 @@ and a native lookup failure throws `Win32Exception`. Paths exceeding the runtime
 `ExecuteDefault` runs the default Shell verb for a path. Its overload `ExecuteDefault(file, with, cancellationToken)` opens `file` with the specified executable. `ExecuteProperties` opens the Properties verb. These methods return `Task`; await them to observe errors. Shell work runs on an STA worker. An optional cancellation token can stop work before dispatch, but cannot interrupt a native Shell call already in progress.
 
 `GetLinkPath` resolves a `.lnk` shortcut and returns its target path, or `null` for a non-shortcut or a lookup failure. Cancellation is propagated. `Win32ShellService` can use a supplied `Brows.Threading.STAThreadPool`; passing `null` creates a pool owned by the service. Dispose the service after its operations finish.
+
+## Diagnostic console
+
+A GUI application, including WPF, can create a dedicated diagnostic console:
+
+~~~csharp
+using Brows.Win32;
+using System;
+
+using var kernel = new Win32KernelService();
+kernel.ShowConsole();
+Console.WriteLine("Diagnostic output");
+Console.Error.WriteLine("Diagnostic error");
+kernel.FreeConsole(); // Call explicitly if release is desired before disposing the service.
+~~~
+
+The console is shared by the process. ShowConsole returns true when it creates a
+session and false when that session is already active. FreeConsole returns true
+when it completes cleanup and false when there is no session created by these
+services. Any live kernel service can free it. **Disposing a service leaves the
+console and its output routing intact:**
+
+~~~csharp
+using (var temporaryKernel = new Win32KernelService()) {
+    temporaryKernel.ShowConsole();
+}
+Console.WriteLine("The console is still available.");
+using var cleanupKernel = new Win32KernelService();
+cleanupKernel.FreeConsole();
+~~~
+
+ShowConsole temporarily routes managed Console.Out and Console.Error to the
+console even if they were initialized before allocation or native stdout/stderr
+were redirected. Explicit release restores saved managed writers and native
+standard-handle entries while preserving caller-installed replacements. Coordinate
+external writer, handle, and console changes with these operations. Console.In,
+blocking input, cached Is*Redirected values, and other Console API state are not
+managed by this diagnostic-output service.
+
+An unrelated pre-existing console remains intact: ShowConsole throws
+Win32Exception if allocation fails, and FreeConsole does not detach it. Native
+setup/release errors are surfaced. Failed cleanup can be retried through any live
+kernel service; ShowConsole rejects a session awaiting cleanup. If setup and its
+rollback both fail, an AggregateException reports both errors.
+
+Explicit release discards console history, and showing again creates a fresh
+session. Other attached processes can keep their console visible. These methods
+manage the application's native association, not the entire terminal host window.
+Normal local desktop allocation is intended; pseudoconsole, remote, or hidden
+startup configurations can have different presentation behavior.
+
+For WPF, invoke FreeConsole from the GUI's dismissal command when desired, before
+service disposal or export shutdown. Console Ctrl+C and Ctrl+Break are consumed
+for diagnostics; native allocation/release reset the control-handler table, so
+applications with their own handlers must coordinate registration. Closing the
+native console window can terminate the WPF process and is not equivalent to
+FreeConsole. Stop/await log producers as appropriate before explicit cleanup;
+synchronous native writes can block in a paused console host.
 
 ## License
 

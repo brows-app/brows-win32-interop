@@ -9,9 +9,15 @@ using System.Text;
 namespace Brows.Win32;
 
 /// <summary>
-/// Queries Windows file identity, directory case-sensitivity settings, and stored path casing.
+/// Queries Windows file identity, directory case-sensitivity settings, and stored path casing,
+/// and manages a shared diagnostic console.
 /// </summary>
+/// <remarks>
+/// Disposing this service does not release the shared console. Call FreeConsole explicitly if release is desired.
+/// </remarks>
 public sealed class Win32KernelService : Win32BaseService {
+    private readonly Win32ConsoleCoordinator ConsoleCoordinator;
+
     private static bool IsNtfs(SafeFileHandle hFile) {
         var fileSystemName = new StringBuilder(261);
         var result = kernel32.GetVolumeInformationByHandleW(
@@ -29,7 +35,83 @@ public sealed class Win32KernelService : Win32BaseService {
             StringComparison.OrdinalIgnoreCase);
     }
 
+    internal Win32KernelService(Win32ConsoleCoordinator consoleCoordinator) {
+        ConsoleCoordinator = consoleCoordinator ?? throw new ArgumentNullException(nameof(consoleCoordinator));
+    }
+
     private protected sealed override void DisposeCore() {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the Win32 kernel service.
+    /// </summary>
+    public Win32KernelService() : this(Win32ConsoleCoordinator.Default) {
+    }
+
+    /// <summary>
+    /// Allocates a shared diagnostic console and routes managed output and error to it.
+    /// </summary>
+    /// <returns>
+    /// True when a console was created; false when the shared diagnostic console is already active.
+    /// </returns>
+    /// <remarks>
+    /// The console belongs to the process and remains allocated after this service is disposed.
+    /// Call FreeConsole explicitly through any live kernel service to release it if desired.
+    /// An existing unrelated console is left intact. Managed output is temporarily redirected;
+    /// console input and other Console API state are not managed. Closing the native console can terminate
+    /// the application, including a WPF application. Use FreeConsole to dismiss it without that close event.
+    /// Diagnostic Ctrl+C and Ctrl+Break are consumed. Native control handlers must be coordinated with
+    /// console allocation and release. These methods do not control a shared terminal host's window.
+    /// </remarks>
+    /// <exception cref="Win32Exception">
+    /// Native allocation or setup failed, including when the process already has an unrelated console.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A previous console cleanup must be completed by calling FreeConsole first.
+    /// </exception>
+    /// <exception cref="AggregateException">
+    /// Console setup and its rollback both failed; FreeConsole can retry the pending cleanup.
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">
+    /// This service has been disposed.
+    /// </exception>
+    public bool ShowConsole() {
+        BeginOperation();
+        try {
+            return ConsoleCoordinator.ShowConsole();
+        }
+        finally {
+            EndOperation();
+        }
+    }
+
+    /// <summary>
+    /// Releases the shared diagnostic console and restores output routing.
+    /// </summary>
+    /// <returns>
+    /// True when shared console cleanup completed; false when there is no session created by these services.
+    /// </returns>
+    /// <remarks>
+    /// Any live kernel service can release the shared console. Service disposal never releases it.
+    /// This method leaves unrelated console associations intact. Release discards the session's output history;
+    /// a later ShowConsole creates a fresh console. Other attached processes can keep their console visible.
+    /// Caller-installed replacement writers and handles are preserved. Failed cleanup remains available
+    /// for retry through any live kernel service, even after this instance is disposed.
+    /// </remarks>
+    /// <exception cref="Win32Exception">
+    /// Native release or standard-handle restoration failed.
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">
+    /// This service has been disposed.
+    /// </exception>
+    public bool FreeConsole() {
+        BeginOperation();
+        try {
+            return ConsoleCoordinator.FreeConsole();
+        }
+        finally {
+            EndOperation();
+        }
     }
 
     /// <summary>

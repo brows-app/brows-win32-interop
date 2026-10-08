@@ -1,4 +1,5 @@
 ﻿using Brows.Composition;
+using System;
 using System.ComponentModel;
 using System.IO;
 using System.Threading.Tasks;
@@ -6,7 +7,8 @@ using System.Threading.Tasks;
 namespace Brows.Win32;
 
 /// <summary>
-/// Provides asynchronous access to Win32 file queries and Windows Shell actions through Brows.Composition.
+/// Provides asynchronous access to Win32 file queries, console management, and Windows Shell actions through
+/// Brows.Composition.
 /// </summary>
 public interface IWin32InteropServices : IExport {
     /// <summary>
@@ -52,6 +54,59 @@ public interface IWin32InteropServices : IExport {
     /// <exception cref="OperationCanceledException">The query is canceled before it starts.</exception>
     /// <exception cref="InvalidOperationException">The composition export has been shut down.</exception>
     Task<bool> PathIsCaseSensitive(string path, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Allocates and configures the shared process console for diagnostic output.
+    /// </summary>
+    /// <param name="cancellationToken">
+    /// Cancels the operation before it is dispatched. A native operation that has started cannot be interrupted.
+    /// </param>
+    /// <returns>
+    /// A task whose result is <see langword="true"/> when this call creates the shared console session, or
+    /// <see langword="false"/> when that session is already active.
+    /// </returns>
+    /// <remarks>
+    /// The console session and output routing are shared by live kernel services in this process. They remain active
+    /// after this export is killed; call <see cref="FreeConsole(CancellationToken)"/> explicitly to release them. An
+    /// unrelated native console association is not detached to make allocation succeed.
+    /// </remarks>
+    /// <exception cref="Win32Exception">
+    /// The console cannot be allocated or configured.
+    /// </exception>
+    /// <exception cref="AggregateException">
+    /// Console setup and its rollback both fail.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// The operation is canceled before dispatch.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A prior cleanup has failed and must be completed, or the composition export has been shut down.
+    /// </exception>
+    Task<bool> ShowConsole(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Releases the console session created by the shared Win32 kernel services.
+    /// </summary>
+    /// <param name="cancellationToken">
+    /// Cancels the operation before it is dispatched. A native operation that has started cannot be interrupted.
+    /// </param>
+    /// <returns>
+    /// A task whose result is <see langword="true"/> when this call completes cleanup of the shared session, or
+    /// <see langword="false"/> when no session created by the shared services exists.
+    /// </returns>
+    /// <remarks>
+    /// Releasing the session affects every service using the shared console. Killing this export does not release it.
+    /// </remarks>
+    /// <exception cref="Win32Exception">
+    /// Native console cleanup fails.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// The operation is canceled before dispatch.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The composition export has been shut down.
+    /// </exception>
+    Task<bool> FreeConsole(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Runs the default Windows Shell action for a file or other Shell path.

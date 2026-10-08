@@ -3,5 +3,25 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\source\Brows.Win32.Interop\Brows.Win32.Interop.csproj" />
+    <ProjectReference Include="..\Brows.Win32.Interop.Tests.ConsoleHost\Brows.Win32.Interop.Tests.ConsoleHost.csproj"
+                      ReferenceOutputAssembly="false"
+                      SetConfiguration="Configuration=$(Configuration)" />
   </ItemGroup>
+  <Target Name="CopyConsoleHostIntegrationHelper" AfterTargets="Build" Condition="'$(TargetFramework)' != ''">
+    <MSBuild Projects="..\Brows.Win32.Interop.Tests.ConsoleHost\Brows.Win32.Interop.Tests.ConsoleHost.csproj"
+             Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)"
+             BuildInParallel="false">
+      <Output TaskParameter="TargetOutputs" ItemName="_ConsoleHostTarget" />
+    </MSBuild>
+    <PropertyGroup>
+      <_ConsoleHostOutputDirectory>@(_ConsoleHostTarget-&gt;'%(RootDir)%(Directory)')</_ConsoleHostOutputDirectory>
+    </PropertyGroup>
+    <ItemGroup>
+      <_ConsoleHostFiles Include="$(_ConsoleHostOutputDirectory)**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ConsoleHostFiles)"
+          DestinationFiles="@(_ConsoleHostFiles-&gt;'$(OutDir)ConsoleHost\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>

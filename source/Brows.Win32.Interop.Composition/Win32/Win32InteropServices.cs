@@ -14,6 +14,7 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
 
     private readonly Lazy<ServiceWrapper> LazyServices;
     private readonly object Locker = new();
+    private readonly Func<Win32KernelService> KernelFactory;
 
     private bool Killing;
     private bool Killed;
@@ -66,15 +67,22 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
         });
     }
 
-    public Win32InteropServices() {
+    internal Win32InteropServices(Func<Win32KernelService> kernelFactory) {
+        if (kernelFactory is null) {
+            throw new ArgumentNullException(nameof(kernelFactory));
+        }
+        KernelFactory = kernelFactory;
         LazyServices = new(() => {
             lock (Locker) {
                 if (Killing || Killed) {
                     throw new InvalidOperationException("The Win32 interop services have already been killed.");
                 }
-                return new(ThreadPoolNotNull);
+                return new(ThreadPoolNotNull, KernelFactory);
             }
         });
+    }
+
+    public Win32InteropServices() : this(() => new()) {
     }
 
     Task IExportAndVary<Win32InteropServicesVariable>.Vary(Win32InteropServicesVariable variable,
@@ -185,6 +193,22 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
             });
     }
 
+    Task<bool> IWin32InteropServices.ShowConsole(CancellationToken cancellationToken) {
+        return UseServices(
+            cancellationToken: cancellationToken,
+            function: (services, cancellationToken) => {
+                return Task.Run(() => services.Kernel.ShowConsole(), cancellationToken);
+            });
+    }
+
+    Task<bool> IWin32InteropServices.FreeConsole(CancellationToken cancellationToken) {
+        return UseServices(
+            cancellationToken: cancellationToken,
+            function: (services, cancellationToken) => {
+                return Task.Run(() => services.Kernel.FreeConsole(), cancellationToken);
+            });
+    }
+
     Task IWin32InteropServices.ExecuteDefault(string file, CancellationToken cancellationToken) {
         return UseServices(
             cancellationToken: cancellationToken,
@@ -231,9 +255,9 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
 
         public STAThreadPool ThreadPool { get; }
 
-        public ServiceWrapper(STAThreadPool threadPool) {
+        public ServiceWrapper(STAThreadPool threadPool, Func<Win32KernelService> kernelFactory) {
             ThreadPool = threadPool;
-            Kernel = new();
+            Kernel = kernelFactory();
             Shell = new(ThreadPool);
         }
 

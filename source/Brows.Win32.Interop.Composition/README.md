@@ -63,6 +63,29 @@ Alternate data streams are unsupported; an ordinary ADS path throws `NotSupporte
 and a native lookup failure throws `Win32Exception`. Paths exceeding the runtime's permitted length throw
 `PathTooLongException`.
 
+### Console diagnostics
+
+Use `ShowConsole` to allocate the shared process console and route `Console.Out` and `Console.Error` to it. Release the
+session explicitly with `FreeConsole` when the application is finished with diagnostic output:
+
+```csharp
+using System;
+
+await services.ShowConsole(cancellationToken);
+Console.WriteLine("Diagnostic output");
+await services.FreeConsole(cancellationToken);
+```
+
+`ShowConsole` returns `false` when the shared session is already active. It allocates a dedicated console; if the process
+already has an unrelated native console association, allocation fails without detaching it. `FreeConsole` returns
+`false` when there is no session created by these services. Both operations affect every live kernel service in the
+process, so coordinate explicit release with other application components. Composition export shutdown does not release
+the console or restore its output routing; call `FreeConsole` before host shutdown when the application wants to close
+the session. A fresh `Win32KernelService` can release it after the Composition export has been killed. Cancellation can
+stop a call before dispatch, but it cannot interrupt a native operation that has started. Native allocation, setup, or
+cleanup failures are reported by the returned task; failed cleanup remains available for an explicit retry through a
+live service.
+
 Use `FileOperation(directory)` to create and execute a batch of Shell file operations. See
 [`Brows.Win32.Interop.Operations`](../Brows.Win32.Interop.Operations/README.md) for batch configuration and progress.
 

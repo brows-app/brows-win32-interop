@@ -9,6 +9,10 @@ namespace Brows.Win32.PlatformInvoke;
 
 [SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "N/A")]
 internal partial class kernel32 {
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal delegate bool ConsoleControlHandler(uint controlType);
+
     public delegate PROGRESS ProgressRoutine(
         long TotalFileSize,
         long TotalBytesTransferred,
@@ -121,12 +125,36 @@ internal partial class kernel32 {
       [In, Out, Optional] IntPtr lpOverlapped,
       [In, Optional] IntPtr lpCompletionRoutine);
 
-    [DllImport("kernel32.dll")]
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool AllocConsole();
 
-    [DllImport("kernel32.dll")]
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool FreeConsole();
 
     [DllImport("kernel32.dll")]
     public static extern bool AttachConsole(int dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetStdHandle(int kind);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetStdHandle(int kind, IntPtr handle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetConsoleCtrlHandler(
+        ConsoleControlHandler handler,
+        [MarshalAs(UnmanagedType.Bool)] bool add);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool WriteConsoleW(
+        SafeFileHandle handle,
+        string text,
+        uint length,
+        out uint written,
+        IntPtr reserved);
 }

@@ -6,6 +6,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Brows.Win32.Interop.Composition.Tests/Brows.Win32.Interop.Composition.Tests.csproj" Id="8811aa89-1a59-4555-bf31-b2cbd8b0ebfa" />
     <Project Path="tests/Brows.Win32.Interop.Operations.Tests/Brows.Win32.Interop.Operations.Tests.csproj" Id="acdc714e-532c-4807-8a82-fbbb754b58b9" />
+    <Project Path="tests/Brows.Win32.Interop.Tests.ConsoleHost/Brows.Win32.Interop.Tests.ConsoleHost.csproj" />
     <Project Path="tests/Brows.Win32.Interop.Tests/Brows.Win32.Interop.Tests.csproj" Id="3802a386-74c2-4b22-8b21-e2f18f2417ab" />
   </Folder>
   <Folder Name="/_/">

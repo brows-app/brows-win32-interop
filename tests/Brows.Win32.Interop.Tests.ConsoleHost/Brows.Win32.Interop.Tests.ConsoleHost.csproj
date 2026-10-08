@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <IsTestProject>false</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <UseAppHost>true</UseAppHost>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Remove="Microsoft.NET.Test.Sdk;Moq;NUnit;NUnit3TestAdapter;NUnit.Analyzers" />
+    <Using Remove="Moq;NUnit.Framework" />
+    <ProjectReference Include="..\..\source\Brows.Win32.Interop\Brows.Win32.Interop.csproj" />
+  </ItemGroup>
+</Project>
