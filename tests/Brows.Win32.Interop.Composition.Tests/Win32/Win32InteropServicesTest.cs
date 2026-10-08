@@ -40,6 +40,13 @@ public sealed class Win32InteropServicesTest {
         Native.Setup(native => native.RegisterControlHandler());
         Native.Setup(native => native.GetStandardHandle(It.IsAny<int>()))
             .Returns((int kind) => StandardHandles[kind]);
+        Native.Setup(native => native.DuplicateStandardHandle(It.IsAny<IntPtr>()))
+            .Returns((IntPtr handle) => new SafeFileHandle(handle, ownsHandle: false));
+        Native.Setup(native => native.AreSameHandle(
+                It.IsAny<SafeFileHandle>(),
+                It.IsAny<IntPtr>(),
+                It.IsAny<IntPtr>()))
+            .Returns((SafeFileHandle knownObject, IntPtr knownValue, IntPtr candidate) => knownValue == candidate);
         Native.Setup(native => native.SetStandardHandle(It.IsAny<int>(), It.IsAny<IntPtr>()))
             .Callback<int, IntPtr>((kind, value) => StandardHandles[kind] = value);
         Native.Setup(native => native.OpenOutput())

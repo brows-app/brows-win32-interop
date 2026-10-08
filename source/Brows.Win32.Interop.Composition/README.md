@@ -84,7 +84,9 @@ the console or restore its output routing; call `FreeConsole` before host shutdo
 the session. A fresh `Win32KernelService` can release it after the Composition export has been killed. Cancellation can
 stop a call before dispatch, but it cannot interrupt a native operation that has started. Native allocation, setup, or
 cleanup failures are reported by the returned task; failed cleanup remains available for an explicit retry through a
-live service.
+live service. On Windows 10 and later, native standard handles are compared by object identity, so a caller
+replacement is preserved even when it reuses the console handle's numeric value. Earlier Windows versions compare
+numeric values; keep handles installed by console allocation open until `FreeConsole` completes successfully.
 
 Use `FileOperation(directory)` to create and execute a batch of Shell file operations. See
 [`Brows.Win32.Interop.Operations`](../Brows.Win32.Interop.Operations/README.md) for batch configuration and progress.

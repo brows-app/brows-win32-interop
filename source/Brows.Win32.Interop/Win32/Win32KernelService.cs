@@ -14,6 +14,8 @@ namespace Brows.Win32;
 /// </summary>
 /// <remarks>
 /// Disposing this service does not release the shared console. Call FreeConsole explicitly if release is desired.
+/// On Windows 10 and later, native standard-handle ownership is checked by object identity. Earlier Windows versions
+/// compare numeric values, so keep handles installed by console allocation open until FreeConsole completes.
 /// </remarks>
 public sealed class Win32KernelService : Win32BaseService {
     private readonly Win32ConsoleCoordinator ConsoleCoordinator;
@@ -96,7 +98,9 @@ public sealed class Win32KernelService : Win32BaseService {
     /// This method leaves unrelated console associations intact. Release discards the session's output history;
     /// a later ShowConsole creates a fresh console. Other attached processes can keep their console visible.
     /// Caller-installed replacement writers and handles are preserved. Failed cleanup remains available
-    /// for retry through any live kernel service, even after this instance is disposed.
+    /// for retry through any live kernel service, even after this instance is disposed. On Windows 10 and later,
+    /// native handles are compared by object identity. Earlier Windows versions compare numeric values; keep handles
+    /// installed by console allocation open until cleanup returns true.
     /// </remarks>
     /// <exception cref="Win32Exception">
     /// Native release or standard-handle restoration failed.

@@ -27,6 +27,26 @@ public sealed class Win32ConsoleCoordinatorTest {
         return new ConsoleTestContext(output, managedOutput);
     }
 
+    private static async Task ObserveStartedTask(Task task) {
+        if (task is null) {
+            return;
+        }
+        var completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(12)));
+        if (completed == task) {
+            try {
+                await task;
+            }
+            catch {
+            }
+            return;
+        }
+        _ = task.ContinueWith(
+            finished => { _ = finished.Exception; },
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
     [Test]
     public void ShowConsole_WhenAllocationFails_ThrowsCapturedErrorWithoutChangingState() {
         var context = CreateContext();
@@ -75,6 +95,23 @@ public sealed class Win32ConsoleCoordinatorTest {
         Assert.That(context.Coordinator.FreeConsole(), Is.True);
         context.Native.Verify(native => native.Allocate(), Times.Exactly(2));
         context.Native.Verify(native => native.Free(), Times.Exactly(2));
+    }
+
+    [Test]
+    public void ShowConsole_WhenPostAllocationHandleSnapshotFails_RestoresUnknownHandles() {
+        var context = CreateContext();
+        var snapshotFailure = new Win32Exception(6);
+        context.FailNextAllocatedStandardHandleGet(StandardOutput, snapshotFailure);
+
+        var exception = Assert.Throws<Win32Exception>(() => context.Coordinator.ShowConsole());
+
+        Assert.That(exception, Is.SameAs(snapshotFailure));
+        Assert.That(context.NativeHandles, Is.EqualTo(context.OriginalNativeHandles));
+        Assert.That(context.Output.Out, Is.SameAs(context.Output.OriginalOut));
+        Assert.That(context.Output.Error, Is.SameAs(context.Output.OriginalError));
+        Assert.That(context.FreeCount, Is.EqualTo(1));
+        Assert.That(context.Coordinator.ShowConsole(), Is.True);
+        Assert.That(context.Coordinator.FreeConsole(), Is.True);
     }
 
     [Test]
@@ -143,8 +180,14 @@ public sealed class Win32ConsoleCoordinatorTest {
         Assert.That(
             () => context.Coordinator.ShowConsole(),
             Throws.TypeOf<InvalidOperationException>());
+        var replacementOutput = new IntPtr(9002);
+        context.SetExternalStandardHandle(StandardOutput, replacementOutput);
+
         Assert.That(context.Coordinator.FreeConsole(), Is.True);
         Assert.That(context.Coordinator.FreeConsole(), Is.False);
+        Assert.That(context.NativeHandles[StandardOutput], Is.EqualTo(replacementOutput));
+        Assert.That(context.NativeHandles[StandardInput], Is.EqualTo(context.OriginalNativeHandles[StandardInput]));
+        Assert.That(context.NativeHandles[StandardError], Is.EqualTo(context.OriginalNativeHandles[StandardError]));
         context.Native.Verify(native => native.Free(), Times.Exactly(2));
         context.Native.Verify(native => native.OpenOutput(), Times.Once);
     }
@@ -165,12 +208,16 @@ public sealed class Win32ConsoleCoordinatorTest {
         Assert.That(context.NativeHandles[StandardOutput], Is.EqualTo(context.OriginalNativeHandles[StandardOutput]));
         Assert.That(context.NativeHandles[StandardError], Is.Not.EqualTo(context.OriginalNativeHandles[StandardError]));
 
+        var replacementError = new IntPtr(9003);
+        context.SetExternalStandardHandle(StandardError, replacementError);
         Assert.That(context.Coordinator.FreeConsole(), Is.True);
 
         Assert.That(context.FreeCount, Is.EqualTo(1));
-        Assert.That(context.NativeHandles, Is.EqualTo(context.OriginalNativeHandles));
+        Assert.That(context.NativeHandles[StandardInput], Is.EqualTo(context.OriginalNativeHandles[StandardInput]));
+        Assert.That(context.NativeHandles[StandardOutput], Is.EqualTo(context.OriginalNativeHandles[StandardOutput]));
+        Assert.That(context.NativeHandles[StandardError], Is.EqualTo(replacementError));
         foreach (var kind in StandardHandleKinds) {
-            var expectedSetCount = setCountsAfterFailure[kind] + (kind == StandardError ? 1 : 0);
+            var expectedSetCount = setCountsAfterFailure[kind];
             Assert.That(context.StandardHandleSetCounts[kind], Is.EqualTo(expectedSetCount));
         }
     }
@@ -263,32 +310,38 @@ public sealed class Win32ConsoleCoordinatorTest {
             }
             context.MarkAllocated();
         });
-        using var firstService = new Win32KernelService(context.Coordinator);
-        using var secondService = new Win32KernelService(context.Coordinator);
-        var firstShow = Task.Run(() => firstService.ShowConsole());
-        Assert.That(allocationEntered.Wait(TimeSpan.FromSeconds(10)), Is.True);
+        var firstService = new Win32KernelService(context.Coordinator);
+        var secondService = new Win32KernelService(context.Coordinator);
         using var secondCallStarted = new ManualResetEventSlim();
-        var secondShow = Task.Run(() => {
-            secondCallStarted.Set();
-            return secondService.ShowConsole();
-        });
-        Assert.That(secondCallStarted.Wait(TimeSpan.FromSeconds(10)), Is.True);
-        releaseAllocation.Set();
-
-        var completed = Array.Empty<bool>();
+        Task<bool> firstShow = null;
+        Task<bool> secondShow = null;
         try {
+            firstShow = Task.Run(() => firstService.ShowConsole());
+            Assert.That(allocationEntered.Wait(TimeSpan.FromSeconds(10)), Is.True);
+            secondShow = Task.Run(() => {
+                secondCallStarted.Set();
+                return secondService.ShowConsole();
+            });
+            Assert.That(secondCallStarted.Wait(TimeSpan.FromSeconds(10)), Is.True);
+            releaseAllocation.Set();
             var allShows = Task.WhenAll(firstShow, secondShow);
             var completedTask = await Task.WhenAny(allShows, Task.Delay(TimeSpan.FromSeconds(10)));
             Assert.That(completedTask, Is.SameAs(allShows));
-            completed = await allShows;
+            var completed = await allShows;
+            Assert.That(completed, Is.EquivalentTo(new[] { true, false }));
+            Assert.That(secondService.FreeConsole(), Is.True);
         }
         finally {
             releaseAllocation.Set();
+            await ObserveStartedTask(firstShow);
+            await ObserveStartedTask(secondShow);
+            var cleanup = Task.Run(() => secondService.FreeConsole());
+            await ObserveStartedTask(cleanup);
+            await ObserveStartedTask(Task.Run(() => firstService.Dispose()));
+            await ObserveStartedTask(Task.Run(() => secondService.Dispose()));
         }
 
-        Assert.That(completed, Is.EquivalentTo(new[] { true, false }));
         context.Native.Verify(native => native.Allocate(), Times.Once);
-        Assert.That(secondService.FreeConsole(), Is.True);
     }
 
     [Test]
@@ -303,31 +356,37 @@ public sealed class Win32ConsoleCoordinatorTest {
             }
             context.MarkAllocated();
         });
-        using var showingService = new Win32KernelService(context.Coordinator);
-        using var freeingService = new Win32KernelService(context.Coordinator);
-        var show = Task.Run(() => showingService.ShowConsole());
-        Assert.That(allocationEntered.Wait(TimeSpan.FromSeconds(10)), Is.True);
+        var showingService = new Win32KernelService(context.Coordinator);
+        var freeingService = new Win32KernelService(context.Coordinator);
         using var freeCallStarted = new ManualResetEventSlim();
-        var free = Task.Run(() => {
-            freeCallStarted.Set();
-            return freeingService.FreeConsole();
-        });
-        Assert.That(freeCallStarted.Wait(TimeSpan.FromSeconds(10)), Is.True);
-        releaseAllocation.Set();
-
-        var results = Array.Empty<bool>();
+        Task<bool> show = null;
+        Task<bool> free = null;
         try {
+            show = Task.Run(() => showingService.ShowConsole());
+            Assert.That(allocationEntered.Wait(TimeSpan.FromSeconds(10)), Is.True);
+            free = Task.Run(() => {
+                freeCallStarted.Set();
+                return freeingService.FreeConsole();
+            });
+            Assert.That(freeCallStarted.Wait(TimeSpan.FromSeconds(10)), Is.True);
+            releaseAllocation.Set();
             var operations = Task.WhenAll(show, free);
             var completedTask = await Task.WhenAny(operations, Task.Delay(TimeSpan.FromSeconds(10)));
             Assert.That(completedTask, Is.SameAs(operations));
-            results = await operations;
+            var results = await operations;
+            Assert.That(results, Is.EqualTo(new[] { true, true }));
+            Assert.That(freeingService.FreeConsole(), Is.False);
         }
         finally {
             releaseAllocation.Set();
+            await ObserveStartedTask(show);
+            await ObserveStartedTask(free);
+            var cleanup = Task.Run(() => freeingService.FreeConsole());
+            await ObserveStartedTask(cleanup);
+            await ObserveStartedTask(Task.Run(() => showingService.Dispose()));
+            await ObserveStartedTask(Task.Run(() => freeingService.Dispose()));
         }
 
-        Assert.That(results, Is.EqualTo(new[] { true, true }));
-        Assert.That(freeingService.FreeConsole(), Is.False);
         context.Native.Verify(native => native.Allocate(), Times.Once);
         context.Native.Verify(native => native.Free(), Times.Once);
     }
@@ -345,18 +404,19 @@ public sealed class Win32ConsoleCoordinatorTest {
             context.MarkAllocated();
         });
         var service = new Win32KernelService(context.Coordinator);
-        var show = Task.Run(() => service.ShowConsole());
-        Assert.That(allocationEntered.Wait(TimeSpan.FromSeconds(10)), Is.True);
         using var disposeStarted = new ManualResetEventSlim();
         using var disposeFinished = new ManualResetEventSlim();
-        var dispose = Task.Run(() => {
-            disposeStarted.Set();
-            service.Dispose();
-            disposeFinished.Set();
-        });
-        Assert.That(disposeStarted.Wait(TimeSpan.FromSeconds(10)), Is.True);
-
+        Task<bool> show = null;
+        Task dispose = null;
         try {
+            show = Task.Run(() => service.ShowConsole());
+            Assert.That(allocationEntered.Wait(TimeSpan.FromSeconds(10)), Is.True);
+            dispose = Task.Run(() => {
+                disposeStarted.Set();
+                service.Dispose();
+                disposeFinished.Set();
+            });
+            Assert.That(disposeStarted.Wait(TimeSpan.FromSeconds(10)), Is.True);
             var disposeReturnedBeforeOperation = disposeFinished.Wait(TimeSpan.FromMilliseconds(100));
             Assert.That(disposeReturnedBeforeOperation, Is.False);
             releaseAllocation.Set();
@@ -368,6 +428,11 @@ public sealed class Win32ConsoleCoordinatorTest {
         }
         finally {
             releaseAllocation.Set();
+            await ObserveStartedTask(show);
+            await ObserveStartedTask(dispose);
+            if (dispose is null) {
+                service.Dispose();
+            }
         }
 
         Assert.That(disposeFinished.IsSet, Is.True);
@@ -396,35 +461,41 @@ public sealed class Win32ConsoleCoordinatorTest {
             })
             .Returns<SafeFileHandle, string>((_, text) => text.Length);
         context.Native.Setup(native => native.Free()).Callback(() => nativeFreeEntered.Set());
-        using var writingService = new Win32KernelService(context.Coordinator);
-        using var freeingService = new Win32KernelService(context.Coordinator);
-        Assert.That(writingService.ShowConsole(), Is.True);
-        var outputHandle = context.OpenedOutputHandles[0];
-        var writer = context.Output.Out;
-        var write = Task.Run(() => writer.Write("in flight"));
-        Assert.That(writeEntered.Wait(TimeSpan.FromSeconds(10)), Is.True);
+        var writingService = new Win32KernelService(context.Coordinator);
+        var freeingService = new Win32KernelService(context.Coordinator);
         using var freeCallStarted = new ManualResetEventSlim();
-        var free = Task.Run(() => {
-            freeCallStarted.Set();
-            return freeingService.FreeConsole();
-        });
-        Assert.That(freeCallStarted.Wait(TimeSpan.FromSeconds(10)), Is.True);
-
+        Task write = null;
+        Task<bool> free = null;
         try {
+            Assert.That(writingService.ShowConsole(), Is.True);
+            var writer = context.Output.Out;
+            write = Task.Run(() => writer.Write("in flight"));
+            Assert.That(writeEntered.Wait(TimeSpan.FromSeconds(10)), Is.True);
+            free = Task.Run(() => {
+                freeCallStarted.Set();
+                return freeingService.FreeConsole();
+            });
+            Assert.That(freeCallStarted.Wait(TimeSpan.FromSeconds(10)), Is.True);
             var nativeFreeStartedBeforeWriteFinished = nativeFreeEntered.Wait(TimeSpan.FromMilliseconds(100));
             Assert.That(nativeFreeStartedBeforeWriteFinished, Is.False);
+            releaseWrite.Set();
+            var operations = Task.WhenAll(write, free);
+            var completedTask = await Task.WhenAny(operations, Task.Delay(TimeSpan.FromSeconds(10)));
+            Assert.That(completedTask, Is.SameAs(operations));
+            await operations;
+            Assert.That(await free, Is.True);
+            Assert.That(context.OpenedOutputHandles[0].IsClosed, Is.True);
+            Assert.That(nativeFreeEntered.IsSet, Is.True);
         }
         finally {
             releaseWrite.Set();
+            await ObserveStartedTask(write);
+            await ObserveStartedTask(free);
+            var cleanup = Task.Run(() => freeingService.FreeConsole());
+            await ObserveStartedTask(cleanup);
+            await ObserveStartedTask(Task.Run(() => writingService.Dispose()));
+            await ObserveStartedTask(Task.Run(() => freeingService.Dispose()));
         }
-
-        var operations = Task.WhenAll(write, free);
-        var completedTask = await Task.WhenAny(operations, Task.Delay(TimeSpan.FromSeconds(10)));
-        Assert.That(completedTask, Is.SameAs(operations));
-        await operations;
-        Assert.That(await free, Is.True);
-        Assert.That(outputHandle.IsClosed, Is.True);
-        Assert.That(nativeFreeEntered.IsSet, Is.True);
     }
 
     [Test]
@@ -453,8 +524,11 @@ public sealed class Win32ConsoleCoordinatorTest {
         private readonly Dictionary<int, IntPtr> AllocatedStandardHandles = new();
         private readonly Dictionary<int, int> HandleSetCounts = new();
         private readonly Dictionary<int, Win32Exception> StandardHandleSetFailures = new();
+        private readonly Dictionary<int, Queue<Win32Exception>> AllocatedStandardHandleGetFailures = new();
         private readonly Queue<Win32Exception> FreeFailures = new();
         private int NextOutputHandle = 1000;
+        private int NextIdentityHandle = 2000;
+        private bool Allocated;
 
         internal Mock<IWin32ConsoleNative> Native { get; }
 
@@ -485,7 +559,21 @@ public sealed class Win32ConsoleCoordinatorTest {
                 HandleSetCounts.Add(kind, 0);
             }
             Native.Setup(native => native.GetStandardHandle(It.IsAny<int>()))
-                .Returns<int>(kind => CurrentStandardHandles[kind]);
+                .Returns<int>(kind => {
+                    if (Allocated && AllocatedStandardHandleGetFailures.TryGetValue(kind, out var failures)) {
+                        if (failures.Count > 0) {
+                            throw failures.Dequeue();
+                        }
+                    }
+                    return CurrentStandardHandles[kind];
+                });
+            Native.Setup(native => native.DuplicateStandardHandle(It.IsAny<IntPtr>()))
+                .Returns<IntPtr>(_ => new SafeFileHandle(new IntPtr(NextIdentityHandle++), ownsHandle: false));
+            Native.Setup(native => native.AreSameHandle(
+                    It.IsAny<SafeFileHandle>(),
+                    It.IsAny<IntPtr>(),
+                    It.IsAny<IntPtr>()))
+                .Returns<SafeFileHandle, IntPtr, IntPtr>((_, knownValue, candidate) => knownValue == candidate);
             Native.Setup(native => native.SetStandardHandle(It.IsAny<int>(), It.IsAny<IntPtr>()))
                 .Callback<int, IntPtr>((kind, value) => {
                     if (StandardHandleSetFailures.TryGetValue(kind, out var failure)) {
@@ -501,6 +589,7 @@ public sealed class Win32ConsoleCoordinatorTest {
                 if (FreeFailures.Count > 0) {
                     throw FreeFailures.Dequeue();
                 }
+                Allocated = false;
             });
             Native.Setup(native => native.RegisterControlHandler()).Callback(() => RegisterCount++);
             Native.Setup(native => native.OpenOutput()).Returns(CreateOutputHandle);
@@ -510,9 +599,18 @@ public sealed class Win32ConsoleCoordinatorTest {
         }
 
         internal void MarkAllocated() {
+            Allocated = true;
             foreach (var kind in StandardHandleKinds) {
                 CurrentStandardHandles[kind] = AllocatedStandardHandles[kind];
             }
+        }
+
+        internal void FailNextAllocatedStandardHandleGet(int kind, Win32Exception exception) {
+            if (!AllocatedStandardHandleGetFailures.TryGetValue(kind, out var failures)) {
+                failures = new Queue<Win32Exception>();
+                AllocatedStandardHandleGetFailures.Add(kind, failures);
+            }
+            failures.Enqueue(exception);
         }
 
         internal SafeFileHandle CreateOutputHandle() {

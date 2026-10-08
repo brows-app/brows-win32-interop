@@ -86,6 +86,11 @@ external writer, handle, and console changes with these operations. Console.In,
 blocking input, cached Is*Redirected values, and other Console API state are not
 managed by this diagnostic-output service.
 
+On Windows 10 and later, native standard handles are compared by object identity,
+so a caller replacement is preserved even when it reuses the console handle's
+numeric value. Earlier Windows versions compare numeric values; keep handles
+installed by console allocation open until FreeConsole returns true.
+
 An unrelated pre-existing console remains intact: ShowConsole throws
 Win32Exception if allocation fails, and FreeConsole does not detach it. Native
 setup/release errors are surfaced. Failed cleanup can be retried through any live

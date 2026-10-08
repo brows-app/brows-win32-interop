@@ -96,6 +96,8 @@ public interface IWin32InteropServices : IExport {
     /// </returns>
     /// <remarks>
     /// Releasing the session affects every service using the shared console. Killing this export does not release it.
+    /// On Windows 10 and later, native standard handles are compared by object identity. Earlier Windows versions
+    /// compare numeric values, so keep handles installed by console allocation open until cleanup completes.
     /// </remarks>
     /// <exception cref="Win32Exception">
     /// Native console cleanup fails.

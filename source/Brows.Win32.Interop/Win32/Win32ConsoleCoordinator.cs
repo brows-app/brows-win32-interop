@@ -24,21 +24,45 @@ internal sealed class Win32ConsoleCoordinator {
 
     private Session Current { get; set; }
 
-    private void CaptureRestoration(Session session) {
+    private void CaptureAttachedRestoration(Session session) {
         for (var index = 0; index < session.SavedHandles.Length; index++) {
-            if (session.RestorationCaptured[index]) {
+            if (!session.InstalledHandleKnown[index]) {
+                session.RestoreHandles[index] = true;
                 continue;
             }
             var handle = Native.GetStandardHandle(StandardInputHandle - index);
-            session.RestoreHandles[index] = !session.InstalledHandleKnown[index]
-                || handle == session.InstalledHandles[index];
-            session.RestorationCaptured[index] = true;
+            session.RestoreHandles[index] = Native.AreSameHandle(
+                session.InstalledHandleIdentities[index],
+                session.InstalledHandles[index],
+                handle);
+        }
+    }
+
+    private void CaptureDetachedHandles(Session session) {
+        for (var index = 0; index < session.SavedHandles.Length; index++) {
+            var shouldCapture = session.RestoreHandles[index] && !session.DetachedHandleKnown[index];
+            if (!shouldCapture) {
+                continue;
+            }
+            try {
+                var handle = Native.GetStandardHandle(StandardInputHandle - index);
+                session.DetachedHandles[index] = handle;
+                session.DetachedHandleIdentities[index] = Native.DuplicateStandardHandle(handle);
+                session.DetachedHandleKnown[index] = true;
+            }
+            catch {
+                session.RestoreHandles[index] = false;
+                session.HandleRestored[index] = true;
+                throw;
+            }
         }
     }
 
     private void Cleanup(Session session) {
         session.Active = false;
-        CaptureRestoration(session);
+        if (session.Attached) {
+            CaptureAttachedRestoration(session);
+        }
         session.Retired = true;
         if (!session.OutRestored) {
             var restore = session.PublishedOut is not null && Output.Out == session.PublishedOut;
@@ -59,14 +83,40 @@ internal sealed class Win32ConsoleCoordinator {
             Native.Free();
             session.Attached = false;
         }
+        CaptureDetachedHandles(session);
         for (var index = 0; index < session.SavedHandles.Length; index++) {
-            var restore = session.RestoreHandles[index] && !session.HandleRestored[index];
-            if (restore) {
-                Native.SetStandardHandle(StandardInputHandle - index, session.SavedHandles[index]);
-                session.HandleRestored[index] = true;
+            if (session.HandleRestored[index]) {
+                continue;
             }
+            if (!session.RestoreHandles[index]) {
+                session.HandleRestored[index] = true;
+                continue;
+            }
+            if (!session.DetachedHandleKnown[index]) {
+                session.HandleRestored[index] = true;
+                continue;
+            }
+            var handle = Native.GetStandardHandle(StandardInputHandle - index);
+            var sameObject = Native.AreSameHandle(
+                session.DetachedHandleIdentities[index],
+                session.DetachedHandles[index],
+                handle);
+            if (!sameObject) {
+                session.HandleRestored[index] = true;
+                continue;
+            }
+            Native.SetStandardHandle(StandardInputHandle - index, session.SavedHandles[index]);
+            session.HandleRestored[index] = true;
         }
+        DisposeHandleIdentities(session);
         Current = null;
+    }
+
+    private void DisposeHandleIdentities(Session session) {
+        for (var index = 0; index < session.SavedHandles.Length; index++) {
+            session.InstalledHandleIdentities[index]?.Dispose();
+            session.DetachedHandleIdentities[index]?.Dispose();
+        }
     }
 
     private void Write(Session session, TextWriter fallback, string text) {
@@ -125,7 +175,10 @@ internal sealed class Win32ConsoleCoordinator {
             Current = session;
             try {
                 for (var index = 0; index < session.InstalledHandles.Length; index++) {
-                    session.InstalledHandles[index] = Native.GetStandardHandle(StandardInputHandle - index);
+                    var installedHandle = Native.GetStandardHandle(StandardInputHandle - index);
+                    var installedHandleIdentity = Native.DuplicateStandardHandle(installedHandle);
+                    session.InstalledHandles[index] = installedHandle;
+                    session.InstalledHandleIdentities[index] = installedHandleIdentity;
                     session.InstalledHandleKnown[index] = true;
                 }
                 Native.RegisterControlHandler();
@@ -166,8 +219,11 @@ internal sealed class Win32ConsoleCoordinator {
         public TextWriter SavedError { get; }
         public IntPtr[] SavedHandles { get; } = new IntPtr[StandardHandleCount];
         public IntPtr[] InstalledHandles { get; } = new IntPtr[StandardHandleCount];
+        public IntPtr[] DetachedHandles { get; } = new IntPtr[StandardHandleCount];
+        public SafeFileHandle[] InstalledHandleIdentities { get; } = new SafeFileHandle[StandardHandleCount];
+        public SafeFileHandle[] DetachedHandleIdentities { get; } = new SafeFileHandle[StandardHandleCount];
         public bool[] InstalledHandleKnown { get; } = new bool[StandardHandleCount];
-        public bool[] RestorationCaptured { get; } = new bool[StandardHandleCount];
+        public bool[] DetachedHandleKnown { get; } = new bool[StandardHandleCount];
         public bool[] RestoreHandles { get; } = new bool[StandardHandleCount];
         public bool[] HandleRestored { get; } = new bool[StandardHandleCount];
         public TextWriter PublishedOut { get; set; }

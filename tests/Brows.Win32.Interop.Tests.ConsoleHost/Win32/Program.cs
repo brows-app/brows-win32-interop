@@ -1,5 +1,6 @@
 ﻿using Microsoft.Win32.SafeHandles;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.IO.Pipes;
@@ -61,6 +62,70 @@ internal static class Program {
         Report("reopened", reopened.ToString());
         Report("buffer_after_reopen", bufferAfterReopen);
         Report("released_reopened", releasedReopened.ToString());
+    }
+
+    private static void RunReusedStandardHandle() {
+        var service = new Win32KernelService();
+        var retainedHandles = new List<SafeFileHandle>();
+        SafeFileHandle replacement = null;
+        var savedStandardOutput = IntPtr.Zero;
+        var savedStandardOutputCaptured = false;
+        var released = false;
+        try {
+            savedStandardOutput = Native.GetStdHandle(Native.STD_OUTPUT_HANDLE);
+            savedStandardOutputCaptured = true;
+            if (!service.ShowConsole()) {
+                throw new InvalidOperationException("The console session was already active.");
+            }
+            var installedStandardOutput = Native.GetStdHandle(Native.STD_OUTPUT_HANDLE);
+            if (!Native.CloseHandle(installedStandardOutput)) {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+
+            const int maximumHandleReuseAttempts = 1024;
+            for (var attempt = 0; attempt < maximumHandleReuseAttempts; attempt++) {
+                var candidate = Native.OpenNull();
+                if (candidate.IsInvalid) {
+                    var error = Marshal.GetLastWin32Error();
+                    candidate.Dispose();
+                    throw new Win32Exception(error);
+                }
+                if (candidate.DangerousGetHandle() == installedStandardOutput) {
+                    replacement = candidate;
+                    break;
+                }
+
+                retainedHandles.Add(candidate);
+            }
+            if (replacement is null) {
+                throw new InvalidOperationException(
+                    "The test could not reuse the console output handle value after 1024 attempts.");
+            }
+            var reusedValue = replacement.DangerousGetHandle() == installedStandardOutput;
+            if (!Native.SetStdHandle(Native.STD_OUTPUT_HANDLE, replacement.DangerousGetHandle())) {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+
+            released = service.FreeConsole();
+            var replacementPreserved =
+                Native.GetStdHandle(Native.STD_OUTPUT_HANDLE) == replacement.DangerousGetHandle();
+            Report("reused_numeric_value", reusedValue.ToString());
+            Report("replacement_preserved", replacementPreserved.ToString());
+            Report("released", released.ToString());
+        }
+        finally {
+            if (savedStandardOutputCaptured) {
+                Native.SetStdHandle(Native.STD_OUTPUT_HANDLE, savedStandardOutput);
+            }
+            if (!released) {
+                service.FreeConsole();
+            }
+            service.Dispose();
+            replacement?.Dispose();
+            foreach (var retainedHandle in retainedHandles) {
+                retainedHandle.Dispose();
+            }
+        }
     }
 
     private static void RunExistingConsole() {
@@ -130,9 +195,15 @@ internal static class Program {
     }
 
     private static void RunControlEvents() {
+        if (!Native.SetConsoleCtrlHandler(IntPtr.Zero, true)) {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
         var service = new Win32KernelService();
         var shown = service.ShowConsole();
         Native.HideConsoleWindow();
+        if (!Native.SetConsoleCtrlHandler(IntPtr.Zero, false)) {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
         using (var controlCObserved = new ManualResetEvent(false)) {
             using (var controlBreakObserved = new ManualResetEvent(false)) {
                 Native.ConsoleCtrlHandler observer = controlType => {
@@ -201,6 +272,14 @@ internal static class Program {
         public static extern IntPtr GetStdHandle(int nStdHandle);
 
         [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetStdHandle(int nStdHandle, IntPtr handle);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool CloseHandle(IntPtr handle);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool GenerateConsoleCtrlEvent(uint dwCtrlEvent, uint dwProcessGroupId);
 
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
@@ -211,6 +290,12 @@ internal static class Program {
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool SetConsoleCtrlHandler(
             ConsoleCtrlHandler handler,
+            [MarshalAs(UnmanagedType.Bool)] bool add);
+
+        [DllImport("kernel32.dll", EntryPoint = "SetConsoleCtrlHandler", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetConsoleCtrlHandler(
+            IntPtr handler,
             [MarshalAs(UnmanagedType.Bool)] bool add);
 
         [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -283,6 +368,23 @@ internal static class Program {
                     throw new IOException("The console accepted only part of the test marker.");
                 }
             }
+        }
+
+        public static SafeFileHandle OpenNull() {
+            const uint GENERIC_READ = 0x80000000;
+            const uint GENERIC_WRITE = 0x40000000;
+            const uint FILE_SHARE_READ = 0x00000001;
+            const uint FILE_SHARE_WRITE = 0x00000002;
+            const uint OPEN_EXISTING = 3;
+
+            return CreateFile(
+                "NUL",
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                IntPtr.Zero,
+                OPEN_EXISTING,
+                0,
+                IntPtr.Zero);
         }
 
         public static string ReadConsoleBuffer() {
@@ -366,6 +468,9 @@ internal static class Program {
                     switch (args[0]) {
                         case "lifecycle":
                             RunLifecycle();
+                            break;
+                        case "handle-reuse":
+                            RunReusedStandardHandle();
                             break;
                         case "existing-console":
                             RunExistingConsole();

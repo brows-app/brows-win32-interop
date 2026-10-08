@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Brows.Win32;
@@ -63,7 +64,10 @@ public sealed class Win32KernelServiceTest {
         return parsed;
     }
 
-    private static ChildResult RunHelper(string scenario, bool redirectStandardStreams = false) {
+    private static ChildResult RunHelper(
+        string scenario,
+        bool redirectStandardStreams = false,
+        bool omitPipeArguments = false) {
         var pipeName = "Brows.Win32.Interop.Tests.ConsoleHost." + Guid.NewGuid().ToString("N");
         var helperPath = Path.Combine(
             TestContext.CurrentContext.TestDirectory,
@@ -81,15 +85,16 @@ public sealed class Win32KernelServiceTest {
             1,
             PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous)) {
+            var arguments = omitPipeArguments ? $"\"{scenario}\"" : $"\"{scenario}\" \"{pipeName}\"";
             var startInfo = new ProcessStartInfo(helperPath) {
-                Arguments = $"\"{scenario}\" \"{pipeName}\"",
+                Arguments = arguments,
                 CreateNoWindow = true,
                 UseShellExecute = false,
+                RedirectStandardError = true,
                 WorkingDirectory = Path.GetDirectoryName(helperPath)
             };
             if (redirectStandardStreams) {
                 startInfo.RedirectStandardOutput = true;
-                startInfo.RedirectStandardError = true;
             }
 
             using (var process = new Process { StartInfo = startInfo }) {
@@ -99,47 +104,109 @@ public sealed class Win32KernelServiceTest {
 
                 Task<string> outputTask = null;
                 Task<string> errorTask = null;
-                if (redirectStandardStreams) {
-                    outputTask = process.StandardOutput.ReadToEndAsync();
+                Task connected = null;
+                Task processExited = null;
+                Task<string> reportTask = null;
+                var cleanupComplete = false;
+
+                try {
+                    if (redirectStandardStreams) {
+                        outputTask = process.StandardOutput.ReadToEndAsync();
+                    }
                     errorTask = process.StandardError.ReadToEndAsync();
-                }
-
-                var connected = Task.Run(() => pipe.WaitForConnection());
-                if (!connected.Wait(ChildTimeoutMilliseconds)) {
-                    KillChild(process);
-                    throw new TimeoutException("The console integration helper did not connect to its status pipe.");
-                }
-
-                var reportTask = Task.Run(() => {
-                    using (var reader = new StreamReader(pipe, new UTF8Encoding(false))) {
-                        return reader.ReadToEnd();
+                    connected = Task.Run(() => pipe.WaitForConnection());
+                    processExited = Task.Run(() => process.WaitForExit());
+                    var connectionResult = Task.WhenAny(
+                        connected,
+                        processExited,
+                        Task.Delay(ChildTimeoutMilliseconds)).GetAwaiter().GetResult();
+                    var connectionFailed = connected.IsFaulted || connected.IsCanceled;
+                    if (!connected.IsCompleted || connectionFailed) {
+                        var childExitedBeforeConnection =
+                            processExited.IsCompleted || connectionResult == processExited;
+                        var connectionError = connected.Exception?.GetBaseException().Message;
+                        CleanupChild(process, pipe, connected, processExited, reportTask, outputTask, errorTask);
+                        cleanupComplete = true;
+                        var diagnostics = GetHelperDiagnostics(process, reportTask, outputTask, errorTask);
+                        if (childExitedBeforeConnection) {
+                            throw new AssertionException(
+                                $"The console integration helper scenario '{scenario}' exited before connecting " +
+                                $"to its status pipe. {diagnostics}");
+                        }
+                        if (connectionFailed) {
+                            throw new AssertionException(
+                                $"The console integration helper scenario '{scenario}' could not connect to its " +
+                                $"status pipe: {connectionError}. {diagnostics}");
+                        }
+                        throw new TimeoutException(
+                            $"The console integration helper scenario '{scenario}' did not connect to its " +
+                            $"status pipe. {diagnostics}");
                     }
-                });
-                if (!process.WaitForExit(ChildTimeoutMilliseconds)) {
-                    KillChild(process);
-                    throw new TimeoutException($"The console integration helper scenario '{scenario}' timed out.");
-                }
-                if (!reportTask.Wait(5000)) {
-                    throw new TimeoutException("The console integration helper did not close its status pipe.");
-                }
-                if (redirectStandardStreams) {
-                    var standardStreamsDidNotClose = !outputTask.Wait(5000) || !errorTask.Wait(5000);
-                    if (standardStreamsDidNotClose) {
-                        throw new TimeoutException("The redirected standard streams did not close.");
-                    }
-                }
+                    connected.GetAwaiter().GetResult();
 
-                var standardOutput = redirectStandardStreams ? outputTask.Result : string.Empty;
-                var standardError = redirectStandardStreams ? errorTask.Result : string.Empty;
-                var values = ParseReport(reportTask.Result);
-                var diagnostics = $"exit code {process.ExitCode}; stdout: {standardOutput}; stderr: {standardError}";
-                var result = new ChildResult(values, process.ExitCode, standardOutput, standardError, diagnostics);
-                if (process.ExitCode != 0) {
-                    throw new AssertionException(
-                        $"The console integration helper scenario '{scenario}' failed. {diagnostics} " +
-                        $"Reported exception: {GetOptionalValue(result, "exception")}");
+                    reportTask = Task.Run(() => {
+                        using (var reader = new StreamReader(pipe, new UTF8Encoding(false))) {
+                            return reader.ReadToEnd();
+                        }
+                    });
+                    var exitResult = Task.WhenAny(
+                        processExited,
+                        Task.Delay(ChildTimeoutMilliseconds)).GetAwaiter().GetResult();
+                    if (exitResult != processExited) {
+                        CleanupChild(process, pipe, connected, processExited, reportTask, outputTask, errorTask);
+                        cleanupComplete = true;
+                        throw new TimeoutException(
+                            $"The console integration helper scenario '{scenario}' timed out. " +
+                            GetHelperDiagnostics(process, reportTask, outputTask, errorTask));
+                    }
+                    processExited.GetAwaiter().GetResult();
+                    if (!WaitForTask(reportTask, 5000)) {
+                        CleanupChild(process, pipe, connected, processExited, reportTask, outputTask, errorTask);
+                        cleanupComplete = true;
+                        throw new TimeoutException(
+                            $"The console integration helper scenario '{scenario}' did not close its status " +
+                            $"pipe. {GetHelperDiagnostics(process, reportTask, outputTask, errorTask)}");
+                    }
+                    if (redirectStandardStreams && !WaitForTask(outputTask, 5000)) {
+                        CleanupChild(process, pipe, connected, processExited, reportTask, outputTask, errorTask);
+                        cleanupComplete = true;
+                        throw new TimeoutException(
+                            $"The redirected standard output did not close. " +
+                            GetHelperDiagnostics(process, reportTask, outputTask, errorTask));
+                    }
+                    if (!WaitForTask(errorTask, 5000)) {
+                        CleanupChild(process, pipe, connected, processExited, reportTask, outputTask, errorTask);
+                        cleanupComplete = true;
+                        throw new TimeoutException(
+                            $"The redirected standard error did not close. " +
+                            GetHelperDiagnostics(process, reportTask, outputTask, errorTask));
+                    }
+
+                    var standardOutput = redirectStandardStreams ? outputTask.Result : string.Empty;
+                    var standardError = errorTask.Result;
+                    var values = ParseReport(reportTask.Result);
+                    var successDiagnostics =
+                        $"exit code {process.ExitCode}; status: {reportTask.Result}; " +
+                        $"stdout: {standardOutput}; stderr: {standardError}";
+                    var result = new ChildResult(
+                        values,
+                        process.ExitCode,
+                        standardOutput,
+                        standardError,
+                        successDiagnostics);
+                    if (process.ExitCode != 0) {
+                        throw new AssertionException(
+                            $"The console integration helper scenario '{scenario}' failed. {successDiagnostics} " +
+                            $"Reported exception: {GetOptionalValue(result, "exception")}");
+                    }
+                    return result;
                 }
-                return result;
+                catch {
+                    if (!cleanupComplete) {
+                        CleanupChild(process, pipe, connected, processExited, reportTask, outputTask, errorTask);
+                    }
+                    throw;
+                }
             }
         }
     }
@@ -172,6 +239,83 @@ public sealed class Win32KernelServiceTest {
         }
         catch (InvalidOperationException) {
         }
+        catch (Win32Exception) {
+        }
+    }
+
+    private static void CleanupChild(
+        Process process,
+        NamedPipeServerStream pipe,
+        Task connected,
+        Task processExited,
+        Task<string> reportTask,
+        Task<string> outputTask,
+        Task<string> errorTask) {
+        KillChild(process);
+        try {
+            pipe.Dispose();
+        }
+        catch (IOException) {
+        }
+        catch (ObjectDisposedException) {
+        }
+        ObserveTask(connected);
+        ObserveTask(processExited);
+        ObserveTask(reportTask);
+        ObserveTask(outputTask);
+        ObserveTask(errorTask);
+    }
+
+    private static bool WaitForTask(Task task, int timeoutMilliseconds) {
+        var completed = Task.WhenAny(task, Task.Delay(timeoutMilliseconds)).GetAwaiter().GetResult();
+        return completed == task;
+    }
+
+    private static void ObserveTask(Task task) {
+        if (task is null) {
+            return;
+        }
+        if (WaitForTask(task, 5000)) {
+            try {
+                task.GetAwaiter().GetResult();
+            }
+            catch {
+            }
+            return;
+        }
+        _ = task.ContinueWith(
+            completed => { _ = completed.Exception; },
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private static string GetHelperDiagnostics(
+        Process process,
+        Task<string> reportTask,
+        Task<string> outputTask,
+        Task<string> errorTask) {
+        var exitCode = process.HasExited ? process.ExitCode.ToString() : "still running";
+        var status = GetTaskText(reportTask);
+        var standardOutput = GetTaskText(outputTask);
+        var standardError = GetTaskText(errorTask);
+        return $"exit code {exitCode}; status: {status}; stdout: {standardOutput}; stderr: {standardError}";
+    }
+
+    private static string GetTaskText(Task<string> task) {
+        if (task is null) {
+            return "not captured";
+        }
+        if (task.Status == TaskStatus.RanToCompletion) {
+            return task.Result;
+        }
+        if (task.IsFaulted) {
+            return $"read failed: {task.Exception?.GetBaseException().Message}";
+        }
+        if (task.IsCanceled) {
+            return "canceled";
+        }
+        return "pending";
     }
 
     [SetUp]
@@ -449,6 +593,13 @@ public sealed class Win32KernelServiceTest {
             Output = new FakeConsoleOutput();
             Native.Setup(native => native.GetStandardHandle(It.IsAny<int>()))
                 .Returns<int>(kind => new IntPtr(-kind));
+            Native.Setup(native => native.DuplicateStandardHandle(It.IsAny<IntPtr>()))
+                .Returns<IntPtr>(handle => new SafeFileHandle(handle, ownsHandle: false));
+            Native.Setup(native => native.AreSameHandle(
+                    It.IsAny<SafeFileHandle>(),
+                    It.IsAny<IntPtr>(),
+                    It.IsAny<IntPtr>()))
+                .Returns<SafeFileHandle, IntPtr, IntPtr>((_, knownValue, candidate) => knownValue == candidate);
             Native.Setup(native => native.SetStandardHandle(It.IsAny<int>(), It.IsAny<IntPtr>()));
             Native.Setup(native => native.Allocate());
             Native.Setup(native => native.Free());
@@ -529,6 +680,15 @@ public sealed class Win32KernelServiceTest {
     }
 
     [Test]
+    public void FreeConsole_PreservesReplacementAfterStandardHandleValueIsReused() {
+        var result = RunHelper("handle-reuse");
+
+        Assert.That(GetBoolean(result, "reused_numeric_value"), Is.True);
+        Assert.That(GetBoolean(result, "replacement_preserved"), Is.True);
+        Assert.That(GetBoolean(result, "released"), Is.True);
+    }
+
+    [Test]
     public void ConsoleControlHandler_ConsumesControlEventsInIsolatedChildProcess() {
         var result = RunHelper("control-events");
 
@@ -541,5 +701,16 @@ public sealed class Win32KernelServiceTest {
         Assert.That(GetRequiredValue(result, "buffer"), Does.Contain("alive-after-ctrl-break"));
         Assert.That(GetBoolean(result, "observer_removed"), Is.True);
         Assert.That(GetBoolean(result, "released"), Is.True);
+    }
+
+    [Test]
+    public void RunHelper_ReportsChildExitBeforeStatusPipeConnection() {
+        var exception = Assert.Throws<AssertionException>(
+            () => RunHelper("lifecycle", omitPipeArguments: true));
+
+        Assert.That(exception.Message, Does.Contain("exited before connecting"));
+        Assert.That(exception.Message, Does.Contain("exit code 2"));
+        Assert.That(exception.Message, Does.Contain("status:"));
+        Assert.That(exception.Message, Does.Contain("stderr:"));
     }
 }
