@@ -217,6 +217,14 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
             });
     }
 
+    Task<string> IWin32InteropServices.GetStoredPath(string path, CancellationToken cancellationToken) {
+        return UseServices(
+            cancellationToken: cancellationToken,
+            function: (services, cancellationToken) => {
+                return Task.Run(() => services.Kernel.GetStoredPath(path), cancellationToken);
+            });
+    }
+
     private sealed class ServiceWrapper : IDisposable {
         public Win32KernelService Kernel { get; }
         public Win32ShellService Shell { get; }

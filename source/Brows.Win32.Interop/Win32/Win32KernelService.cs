@@ -9,7 +9,7 @@ using System.Text;
 namespace Brows.Win32;
 
 /// <summary>
-/// Queries Windows file identity and directory case-sensitivity settings.
+/// Queries Windows file identity, directory case-sensitivity settings, and stored path casing.
 /// </summary>
 public sealed class Win32KernelService : Win32BaseService {
     private static bool IsNtfs(SafeFileHandle hFile) {
@@ -29,67 +29,92 @@ public sealed class Win32KernelService : Win32BaseService {
             StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool PathsAreEquivalentCore(string path1, string path2) {
-        using (var hFile1 = kernel32.CreateFileW(path1,
-                                                 0,
-                                                 FileShare.ReadWrite | FileShare.Delete,
-                                                 IntPtr.Zero,
-                                                 FileMode.Open,
-                                                 (FileAttributes)FILE_FLAG.BACKUP_SEMANTICS,
-                                                 IntPtr.Zero)) {
-            if (hFile1.IsInvalid) {
-                throw new Win32Exception();
-            }
-            using (var hFile2 = kernel32.CreateFileW(path2,
-                                                     0,
-                                                     FileShare.ReadWrite | FileShare.Delete,
-                                                     IntPtr.Zero,
-                                                     FileMode.Open,
-                                                     (FileAttributes)FILE_FLAG.BACKUP_SEMANTICS,
-                                                     IntPtr.Zero)) {
-                if (hFile2.IsInvalid) {
-                    throw new Win32Exception();
-                }
-                var fileIdInfo1 = default(FILE_ID_INFO);
-                var result1 = kernel32.GetFileInformationByHandleEx(
-                    hFile1,
-                    FILE_INFO_BY_HANDLE_CLASS.FileIdInfo,
-                    out fileIdInfo1,
-                    (uint)Marshal.SizeOf<FILE_ID_INFO>());
-                var error1 = result1 ? 0 : Marshal.GetLastWin32Error();
-                var fileIdInfo2 = default(FILE_ID_INFO);
-                var result2 = kernel32.GetFileInformationByHandleEx(
-                    hFile2,
-                    FILE_INFO_BY_HANDLE_CLASS.FileIdInfo,
-                    out fileIdInfo2,
-                    (uint)Marshal.SizeOf<FILE_ID_INFO>());
-                var error2 = result2 ? 0 : Marshal.GetLastWin32Error();
-                if (result1 && result2) {
-                    return
-                        fileIdInfo1.VolumeSerialNumber == fileIdInfo2.VolumeSerialNumber &&
-                        fileIdInfo1.FileId.IdentifierLow == fileIdInfo2.FileId.IdentifierLow &&
-                        fileIdInfo1.FileId.IdentifierHigh == fileIdInfo2.FileId.IdentifierHigh;
-                }
-                if (IsNtfs(hFile1) && IsNtfs(hFile2)) {
-                    var fileInfo1 = default(BY_HANDLE_FILE_INFORMATION);
-                    if (kernel32.GetFileInformationByHandle(hFile1, out fileInfo1) == false) {
-                        throw new Win32Exception();
-                    }
-                    var fileInfo2 = default(BY_HANDLE_FILE_INFORMATION);
-                    if (kernel32.GetFileInformationByHandle(hFile2, out fileInfo2) == false) {
-                        throw new Win32Exception();
-                    }
-                    return
-                        fileInfo1.VolumeSerialNumber == fileInfo2.VolumeSerialNumber &&
-                        fileInfo1.FileIndexHigh == fileInfo2.FileIndexHigh &&
-                        fileInfo1.FileIndexLow == fileInfo2.FileIndexLow;
-                }
-                throw new Win32Exception(result1 ? error2 : error1);
-            }
-        }
+    private protected sealed override void DisposeCore() {
     }
 
-    private protected sealed override void DisposeCore() {
+    /// <summary>
+    /// Gets an absolute path with the stored casing of each existing file-system component below the path root.
+    /// </summary>
+    /// <param name="path">
+    /// The existing file or directory path.
+    /// </param>
+    /// <returns>
+    /// The absolute path with each component below its root using its stored spelling.
+    /// </returns>
+    /// <remarks>
+    /// Relative paths are resolved against the current directory. The root spelling comes from that resolved path.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="path"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="path"/> is invalid or contains wildcards.
+    /// </exception>
+    /// <exception cref="Win32Exception">
+    /// The path cannot be opened or a path component cannot be found or enumerated.
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">
+    /// The service has been disposed.
+    /// </exception>
+    public string GetStoredPath(string path) {
+        BeginOperation();
+        try {
+            if (path is null) {
+                throw new ArgumentNullException(nameof(path));
+            }
+            return getStoredPathCore(path);
+        }
+        finally {
+            EndOperation();
+        }
+        static string getStoredPathCore(string path) {
+            var fullPath = Path.GetFullPath(path);
+            var rootPath = Path.GetPathRoot(fullPath);
+            if (string.IsNullOrEmpty(rootPath)) {
+                throw new ArgumentException("The path must have a root.", nameof(path));
+            }
+            var wildcardSearchStart = fullPath.StartsWith(@"\\?\", StringComparison.Ordinal) ? 4 : 0;
+            var pathHasWildcards = fullPath.IndexOf('*') >= 0 || fullPath.IndexOf('?', wildcardSearchStart) >= 0;
+            if (pathHasWildcards) {
+                throw new ArgumentException("The path must not contain wildcard characters.", nameof(path));
+            }
+            var storedPath = rootPath;
+            var pathIsRoot = fullPath.Length == rootPath.Length;
+            if (pathIsRoot) {
+                using (var hRoot = kernel32.CreateFileW(
+                    rootPath,
+                    0,
+                    FileShare.ReadWrite | FileShare.Delete,
+                    IntPtr.Zero,
+                    FileMode.Open,
+                    (FileAttributes)FILE_FLAG.BACKUP_SEMANTICS,
+                    IntPtr.Zero)) {
+                    if (hRoot.IsInvalid) {
+                        throw new Win32Exception();
+                    }
+                }
+                return storedPath;
+            }
+            var components = fullPath.Substring(rootPath.Length).Split(Path.DirectorySeparatorChar);
+            foreach (var component in components) {
+                if (string.IsNullOrEmpty(component)) {
+                    continue;
+                }
+                var findHandle = kernel32.FindFirstFileW(
+                    Path.Combine(storedPath, component),
+                    out var findData);
+                if (findHandle == new IntPtr(-1)) {
+                    throw new Win32Exception();
+                }
+                try {
+                    storedPath = Path.Combine(storedPath, findData.FileName);
+                }
+                finally {
+                    kernel32.FindClose(findHandle);
+                }
+            }
+            return storedPath;
+        }
     }
 
     /// <summary>
@@ -101,10 +126,69 @@ public sealed class Win32KernelService : Win32BaseService {
     public bool PathsAreEquivalent(string path1, string path2) {
         BeginOperation();
         try {
-            return PathsAreEquivalentCore(path1, path2);
+            return pathsAreEquivalentCore(path1, path2);
         }
         finally {
             EndOperation();
+        }
+        static bool pathsAreEquivalentCore(string path1, string path2) {
+            using (var hFile1 = kernel32.CreateFileW(path1,
+                                                     0,
+                                                     FileShare.ReadWrite | FileShare.Delete,
+                                                     IntPtr.Zero,
+                                                     FileMode.Open,
+                                                     (FileAttributes)FILE_FLAG.BACKUP_SEMANTICS,
+                                                     IntPtr.Zero)) {
+                if (hFile1.IsInvalid) {
+                    throw new Win32Exception();
+                }
+                using (var hFile2 = kernel32.CreateFileW(path2,
+                                                         0,
+                                                         FileShare.ReadWrite | FileShare.Delete,
+                                                         IntPtr.Zero,
+                                                         FileMode.Open,
+                                                         (FileAttributes)FILE_FLAG.BACKUP_SEMANTICS,
+                                                         IntPtr.Zero)) {
+                    if (hFile2.IsInvalid) {
+                        throw new Win32Exception();
+                    }
+                    var fileIdInfo1 = default(FILE_ID_INFO);
+                    var result1 = kernel32.GetFileInformationByHandleEx(
+                        hFile1,
+                        FILE_INFO_BY_HANDLE_CLASS.FileIdInfo,
+                        out fileIdInfo1,
+                        (uint)Marshal.SizeOf<FILE_ID_INFO>());
+                    var error1 = result1 ? 0 : Marshal.GetLastWin32Error();
+                    var fileIdInfo2 = default(FILE_ID_INFO);
+                    var result2 = kernel32.GetFileInformationByHandleEx(
+                        hFile2,
+                        FILE_INFO_BY_HANDLE_CLASS.FileIdInfo,
+                        out fileIdInfo2,
+                        (uint)Marshal.SizeOf<FILE_ID_INFO>());
+                    var error2 = result2 ? 0 : Marshal.GetLastWin32Error();
+                    if (result1 && result2) {
+                        return
+                            fileIdInfo1.VolumeSerialNumber == fileIdInfo2.VolumeSerialNumber &&
+                            fileIdInfo1.FileId.IdentifierLow == fileIdInfo2.FileId.IdentifierLow &&
+                            fileIdInfo1.FileId.IdentifierHigh == fileIdInfo2.FileId.IdentifierHigh;
+                    }
+                    if (IsNtfs(hFile1) && IsNtfs(hFile2)) {
+                        var fileInfo1 = default(BY_HANDLE_FILE_INFORMATION);
+                        if (kernel32.GetFileInformationByHandle(hFile1, out fileInfo1) == false) {
+                            throw new Win32Exception();
+                        }
+                        var fileInfo2 = default(BY_HANDLE_FILE_INFORMATION);
+                        if (kernel32.GetFileInformationByHandle(hFile2, out fileInfo2) == false) {
+                            throw new Win32Exception();
+                        }
+                        return
+                            fileInfo1.VolumeSerialNumber == fileInfo2.VolumeSerialNumber &&
+                            fileInfo1.FileIndexHigh == fileInfo2.FileIndexHigh &&
+                            fileInfo1.FileIndexLow == fileInfo2.FileIndexLow;
+                    }
+                    throw new Win32Exception(result1 ? error2 : error1);
+                }
+            }
         }
     }
 
@@ -117,12 +201,12 @@ public sealed class Win32KernelService : Win32BaseService {
     public bool PathIsCaseSensitive(string path) {
         BeginOperation();
         try {
-            return core(path);
+            return pathIsCaseSensitiveCore(path);
         }
         finally {
             EndOperation();
         }
-        static bool core(string path) {
+        static bool pathIsCaseSensitiveCore(string path) {
             const uint FILE_CS_FLAG_CASE_SENSITIVE_DIR = 0x00000001;
             const uint FILE_READ_ATTRIBUTES = 0x00000080;
             var hFile = kernel32.CreateFileW(

@@ -54,6 +54,15 @@ internal partial class kernel32 {
         IntPtr hTemplateFile);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr FindFirstFileW(
+        string lpFileName,
+        out WIN32_FIND_DATAW lpFindFileData);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool FindClose(IntPtr hFindFile);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool CopyFileExW(
         string lpExistingFileName,

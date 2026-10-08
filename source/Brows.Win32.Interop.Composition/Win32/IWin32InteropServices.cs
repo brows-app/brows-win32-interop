@@ -109,4 +109,36 @@ public interface IWin32InteropServices : IExport {
     /// <exception cref="OperationCanceledException">The lookup is canceled before it starts.</exception>
     /// <exception cref="InvalidOperationException">The composition export has been shut down.</exception>
     Task<string> GetLinkPath(string file, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets an absolute path with the stored casing of each existing file-system component below the path root.
+    /// </summary>
+    /// <param name="path">
+    /// The existing file or directory path.
+    /// </param>
+    /// <param name="cancellationToken">
+    /// Cancels the lookup before it starts. A native query that is already running cannot be interrupted.
+    /// </param>
+    /// <returns>
+    /// A task whose result is the absolute path with each component below its root using its stored spelling.
+    /// </returns>
+    /// <remarks>
+    /// Relative paths are resolved against the current directory. The root spelling comes from that resolved path.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="path"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="path"/> is invalid or contains wildcards.
+    /// </exception>
+    /// <exception cref="Win32Exception">
+    /// The path cannot be opened or a path component cannot be found or enumerated.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// The lookup is canceled before it starts.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The composition export has been shut down.
+    /// </exception>
+    Task<string> GetStoredPath(string path, CancellationToken cancellationToken = default);
 }

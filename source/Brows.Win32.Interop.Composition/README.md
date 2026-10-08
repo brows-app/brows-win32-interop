@@ -50,6 +50,11 @@ queued work before the native call starts; it cannot interrupt a native call alr
 `GetLinkPath` returns a shortcut's target, or `null` if the path is not a shortcut or lookup fails. It does not check
 whether the target exists. Cancellation is propagated through the returned task.
 
+`GetStoredPath` returns an absolute path with the stored casing of each existing file-system component beneath its
+volume or share root. The root spelling comes from the resolved input path. The path must exist, and the caller must be
+able to enumerate its components. Relative paths are resolved against the current directory. Cancellation can stop
+the lookup before it starts, but cannot interrupt a native directory query already in progress.
+
 Use `FileOperation(directory)` to create and execute a batch of Shell file operations. See
 [`Brows.Win32.Interop.Operations`](../Brows.Win32.Interop.Operations/README.md) for batch configuration and progress.
 
