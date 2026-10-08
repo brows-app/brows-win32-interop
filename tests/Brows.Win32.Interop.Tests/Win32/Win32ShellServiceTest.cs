@@ -54,22 +54,22 @@ public sealed class Win32ShellServiceTest {
     }
 
     [Test]
-    public void ExecuteDefault_WhenFileDoesNotExist_ReportsShellExecuteResult() {
+    public async Task ExecuteDefault_WhenFileDoesNotExist_ReportsShellExecuteResult() {
         var missing = Path.Combine(TempDirectory, "missing.txt");
         using var service = new Win32ShellService(threadPool: null);
 
-        var exception = Assert.ThrowsAsync<Win32Exception>(async () => await service.ExecuteDefault(missing));
+        var exception = await Assert.ThrowsAsync<Win32Exception>(async () => await service.ExecuteDefault(missing));
 
         Assert.That(exception.NativeErrorCode, Is.EqualTo(2));
     }
 
     [Test]
-    public void ExecuteDefault_WithInvalidExecutable_ReportsNativeError() {
+    public async Task ExecuteDefault_WithInvalidExecutable_ReportsNativeError() {
         var invalidExecutable = Path.Combine(TempDirectory, "invalid.exe");
         File.WriteAllText(invalidExecutable, "This is not an executable.");
         using var service = new Win32ShellService(threadPool: null);
 
-        var exception = Assert.ThrowsAsync<Win32Exception>(async () => await service.ExecuteDefault(invalidExecutable));
+        var exception = await Assert.ThrowsAsync<Win32Exception>(async () => await service.ExecuteDefault(invalidExecutable));
 
         Assert.That(exception.NativeErrorCode, Is.EqualTo(216));
     }
