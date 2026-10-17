@@ -12,14 +12,15 @@ public sealed class Win32InteropServicesVariable : IExportVariable {
     /// Gets or sets the STA pool used for Shell actions and batched file operations.
     /// </summary>
     /// <value>
-    /// The pool to use, or <see langword="null"/> to have the export create a pool it owns through the host's
-    /// <see cref="ISTAThreadPoolFactory"/> import.
+    /// The pool to use, or <see langword="null"/> to resolve a pool through the host's optional
+    /// <see cref="ISTAThreadPoolProvider"/> import, falling back to its <see cref="ISTAThreadPoolFactory"/> import.
     /// </value>
     /// <remarks>
-    /// Apply this configuration before the export creates its underlying services. A supplied pool remains
-    /// caller-owned and is not emptied when the export shuts down; a pool created by the export is emptied when
-    /// the export shuts down. When no pool is supplied, the host composition must supply an
-    /// <see cref="ISTAThreadPoolFactory"/> import, which the export uses to create the pool.
+    /// Apply this configuration before the export creates its underlying services. A supplied pool takes precedence
+    /// over both imports and remains caller-owned. Otherwise, the provider is called with the interop export instance
+    /// as its target. A provider-returned pool remains externally owned. Neither is emptied by the export on shutdown;
+    /// the caller, provider, or host manages its lifetime. If the provider is absent or returns null, the export creates
+    /// a pool through the factory and empties that owned pool on shutdown. Configuration fails if no pool is available.
     /// </remarks>
     public ISTAThreadPool ThreadPool { get; set; }
 

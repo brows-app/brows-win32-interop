@@ -37,11 +37,18 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
             if (shuttingDown) {
                 throw new InvalidOperationException("The Win32 interop services have already been killed.");
             }
-            if (ThreadPool is not null) {
+            var existingThreadPool = ThreadPool;
+            if (existingThreadPool is not null) {
                 return;
             }
-            ThreadPool = ThreadPoolFactory?.Create(nameof(Win32InteropServices), new())
-                ?? throw new InvalidOperationException("Unable to create an STA thread pool.");
+            var providedThreadPool = ThreadPool = ThreadPoolProvider?.GetThreadPool(this);
+            if (providedThreadPool is not null) {
+                return;
+            }
+            var createdThreadPool = ThreadPool = ThreadPoolFactory?.CreateThreadPool(nameof(Win32InteropServices));
+            if (createdThreadPool is null) {
+                throw new InvalidOperationException("Unable to create an STA thread pool.");
+            }
             ThreadPoolOwned = true;
         }
     }
@@ -87,8 +94,8 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
         });
     }
 
-    [ImportOptional]
-    internal ISTAThreadPoolFactory ThreadPoolFactory { get; set; }
+    [ImportOptional] internal ISTAThreadPoolFactory ThreadPoolFactory { get; set; }
+    [ImportOptional] internal ISTAThreadPoolProvider ThreadPoolProvider { get; set; }
 
     internal Win32InteropServices(Func<Win32KernelService> kernelFactory) {
         if (kernelFactory is null) {
@@ -121,12 +128,22 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
             if (LazyServices.IsValueCreated) {
                 throw new InvalidOperationException("The Win32 interop services have already been created.");
             }
+            ThreadPoolOwned = false;
             /*
              * Composition supplies variables before populating imports. If the factory is not yet available,
              * InitializeThreadPool creates the pool after import population.
              */
-            ThreadPool = threadPool ?? ThreadPoolFactory?.Create(nameof(Win32InteropServices), new());
-            ThreadPoolOwned = ThreadPool != threadPool;
+            var varyThreadPool = ThreadPool = threadPool;
+            if (varyThreadPool is null) {
+                var providedThreadPool = ThreadPool = ThreadPoolProvider?.GetThreadPool(this);
+                if (providedThreadPool is null) {
+                    var createdThreadpool = ThreadPool =
+                        ThreadPoolFactory?.CreateThreadPool(nameof(Win32InteropServices));
+                    if (createdThreadpool is not null) {
+                        ThreadPoolOwned = true;
+                    }
+                }
+            }
         }
         OnGetOwnerWindow = variable?.OnGetOwnerWindow;
         return Task.CompletedTask;

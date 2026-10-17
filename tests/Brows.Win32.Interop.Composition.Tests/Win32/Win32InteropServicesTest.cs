@@ -122,9 +122,13 @@ public sealed class Win32InteropServicesTest {
         }
     }
 
-    [TestCase(false)]
-    [TestCase(true)]
-    public async Task Composition_WhenPoolIsSupplied_UsesCallerOwnedPool(bool factoryAvailable) {
+    [TestCase(false, false)]
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
+    public async Task Composition_WhenPoolIsSupplied_UsesCallerOwnedPool(
+        bool factoryAvailable,
+        bool providerAvailable) {
         var pool = new Mock<ISTAThreadPool>(MockBehavior.Strict);
         pool.Setup(item => item.Work(
                 nameof(Win32ShellService.ExecuteDefault), It.IsAny<Action>(), CancellationToken.None))
@@ -132,20 +136,140 @@ public sealed class Win32InteropServicesTest {
         var services = new Win32InteropServices();
         var variable = new Win32InteropServicesVariable { ThreadPool = pool.Object };
         var factory = new Mock<ISTAThreadPoolFactory>(MockBehavior.Strict);
-        IExport[] exports = factoryAvailable ? [services, factory.Object] : [services];
-        var imports = await InitializeImports(variable, exports);
+        var provider = new Mock<ISTAThreadPoolProvider>(MockBehavior.Strict);
+        var exports = new List<IExport> { services };
+        if (factoryAvailable) {
+            exports.Add(factory.Object);
+        }
+        if (providerAvailable) {
+            exports.Add(provider.Object);
+        }
+        var imports = await InitializeImports(variable, exports.ToArray());
         try {
             var exported = imports.Find<IWin32InteropServices>(throwIfNotFound: true);
             await exported.ExecuteDefault("unused");
             pool.Verify(item => item.Work(
                 nameof(Win32ShellService.ExecuteDefault), It.IsAny<Action>(), CancellationToken.None), Times.Once);
             Assert.That(services.ThreadPoolFactory, Is.SameAs(factoryAvailable ? factory.Object : null));
+            Assert.That(services.ThreadPoolProvider, Is.SameAs(providerAvailable ? provider.Object : null));
         }
         finally {
             imports.Kill();
         }
         pool.Verify(item => item.Empty(), Times.Never);
-        factory.Verify(item => item.Create(It.IsAny<string>(), It.IsAny<STAThreadPoolOptions>()), Times.Never);
+        provider.Verify(item => item.GetThreadPool(It.IsAny<object>()), Times.Never);
+        factory.Verify(item => item.CreateThreadPool(
+            It.IsAny<string>(),
+            It.IsAny<STAThreadPoolOptions>()),
+            Times.Never);
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task Composition_WhenProviderReturnsPool_UsesExternallyOwnedPool(bool factoryAvailable) {
+        var pool = new Mock<ISTAThreadPool>(MockBehavior.Strict);
+        pool.Setup(item => item.Work(
+                nameof(Win32ShellService.ExecuteDefault), It.IsAny<Action>(), CancellationToken.None))
+            .Returns(Task.CompletedTask);
+        var services = new Win32InteropServices();
+        var provider = new Mock<ISTAThreadPoolProvider>(MockBehavior.Strict);
+        provider.Setup(item => item.GetThreadPool(services)).Returns(pool.Object);
+        var factory = new Mock<ISTAThreadPoolFactory>(MockBehavior.Strict);
+        IExport[] exports = factoryAvailable
+            ? [services, provider.Object, factory.Object]
+            : [services, provider.Object];
+        var imports = await InitializeImports(new Win32InteropServicesVariable(), exports);
+        try {
+            await imports.Find<IWin32InteropServices>(throwIfNotFound: true).ExecuteDefault("unused");
+            pool.Verify(item => item.Work(
+                nameof(Win32ShellService.ExecuteDefault), It.IsAny<Action>(), CancellationToken.None), Times.Once);
+            Assert.That(services.ThreadPoolProvider, Is.SameAs(provider.Object));
+        }
+        finally {
+            imports.Kill();
+        }
+        provider.Verify(item => item.GetThreadPool(services), Times.Once);
+        factory.Verify(item => item.CreateThreadPool(
+            It.IsAny<string>(), It.IsAny<STAThreadPoolOptions>()), Times.Never);
+        pool.Verify(item => item.Empty(), Times.Never);
+    }
+
+    [Test]
+    public async Task Composition_WhenProviderReturnsNull_FallsBackToOwnedFactoryPool() {
+        var pool = new Mock<ISTAThreadPool>(MockBehavior.Strict);
+        pool.Setup(item => item.Work(
+                nameof(Win32ShellService.ExecuteDefault), It.IsAny<Action>(), CancellationToken.None))
+            .Returns(Task.CompletedTask);
+        pool.Setup(item => item.Empty());
+        var services = new Win32InteropServices();
+        var provider = new Mock<ISTAThreadPoolProvider>(MockBehavior.Strict);
+        provider.Setup(item => item.GetThreadPool(services)).Returns((ISTAThreadPool)null);
+        var factory = new Mock<ISTAThreadPoolFactory>(MockBehavior.Strict);
+        factory.Setup(item => item.CreateThreadPool(nameof(Win32InteropServices), It.IsAny<STAThreadPoolOptions>()))
+            .Returns(pool.Object);
+        var imports = await InitializeImports(
+            new Win32InteropServicesVariable(), services, provider.Object, factory.Object);
+        try {
+            await imports.Find<IWin32InteropServices>(throwIfNotFound: true).ExecuteDefault("unused");
+            pool.Verify(item => item.Work(
+                nameof(Win32ShellService.ExecuteDefault), It.IsAny<Action>(), CancellationToken.None), Times.Once);
+        }
+        finally {
+            imports.Kill();
+        }
+        provider.Verify(item => item.GetThreadPool(services), Times.Once);
+        factory.Verify(item => item.CreateThreadPool(
+            nameof(Win32InteropServices), It.IsAny<STAThreadPoolOptions>()), Times.Once);
+        pool.Verify(item => item.Empty(), Times.Once);
+    }
+
+    [Test]
+    public void Composition_WhenProviderReturnsNullAndFactoryIsMissing_ReportsMissingPool() {
+        var services = new Win32InteropServices();
+        var provider = new Mock<ISTAThreadPoolProvider>(MockBehavior.Strict);
+        provider.Setup(item => item.GetThreadPool(services)).Returns((ISTAThreadPool)null);
+
+        Assert.That(
+            async () => await InitializeImports(new Win32InteropServicesVariable(), services, provider.Object),
+            Throws.TypeOf<TargetInvocationException>()
+                .With.InnerException.Message.EqualTo("Unable to create an STA thread pool."));
+
+        provider.Verify(item => item.GetThreadPool(services), Times.Once);
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task Vary_WhenImportsAreAlreadyAvailable_SelectsPoolAndPreservesOwnership(bool providerReturnsPool) {
+        var pool = new Mock<ISTAThreadPool>(MockBehavior.Strict);
+        pool.Setup(item => item.Work(
+                nameof(Win32ShellService.ExecuteDefault), It.IsAny<Action>(), CancellationToken.None))
+            .Returns(Task.CompletedTask);
+        pool.Setup(item => item.Empty());
+        var provider = new Mock<ISTAThreadPoolProvider>(MockBehavior.Strict);
+        var factory = new Mock<ISTAThreadPoolFactory>(MockBehavior.Strict);
+        var services = new Win32InteropServices {
+            ThreadPoolProvider = provider.Object,
+            ThreadPoolFactory = factory.Object,
+        };
+        provider.Setup(item => item.GetThreadPool(services)).Returns(providerReturnsPool ? pool.Object : null);
+        if (!providerReturnsPool) {
+            factory.Setup(item => item.CreateThreadPool(nameof(Win32InteropServices), It.IsAny<STAThreadPoolOptions>()))
+                .Returns(pool.Object);
+        }
+        try {
+            await ((IExportAndVary<Win32InteropServicesVariable>)services).Vary(null, CancellationToken.None);
+            await ((IWin32InteropServices)services).ExecuteDefault("unused");
+            pool.Verify(item => item.Work(
+                nameof(Win32ShellService.ExecuteDefault), It.IsAny<Action>(), CancellationToken.None), Times.Once);
+        }
+        finally {
+            ((IExportAndKill)services).Kill();
+        }
+        provider.Verify(item => item.GetThreadPool(services), Times.Once);
+        factory.Verify(item => item.CreateThreadPool(
+            nameof(Win32InteropServices), It.IsAny<STAThreadPoolOptions>()),
+            providerReturnsPool ? Times.Never() : Times.Once());
+        pool.Verify(item => item.Empty(), providerReturnsPool ? Times.Never() : Times.Once());
     }
 
     [Test]
@@ -156,7 +280,7 @@ public sealed class Win32InteropServicesTest {
             .Returns(Task.CompletedTask);
         pool.Setup(item => item.Empty());
         var factory = new Mock<ISTAThreadPoolFactory>(MockBehavior.Strict);
-        factory.Setup(item => item.Create(nameof(Win32InteropServices), It.IsAny<STAThreadPoolOptions>()))
+        factory.Setup(item => item.CreateThreadPool(nameof(Win32InteropServices), It.IsAny<STAThreadPoolOptions>()))
             .Returns(pool.Object);
         var services = new Win32InteropServices();
         var imports = await InitializeImports(new Win32InteropServicesVariable(), services, factory.Object);
@@ -171,7 +295,8 @@ public sealed class Win32InteropServicesTest {
             imports.Kill();
         }
         factory.Verify(
-            item => item.Create(nameof(Win32InteropServices), It.IsAny<STAThreadPoolOptions>()), Times.Once);
+            item => item.CreateThreadPool(
+                nameof(Win32InteropServices), It.IsAny<STAThreadPoolOptions>()), Times.Once);
         pool.Verify(item => item.Empty(), Times.Once);
     }
 

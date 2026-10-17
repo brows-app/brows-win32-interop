@@ -67,18 +67,21 @@ and a native lookup failure throws `Win32Exception`. Paths exceeding the runtime
 ### STA thread pool
 
 The exported services run Shell actions and batched file operations on an STA worker obtained from a
-`Brows.Threading.ISTAThreadPool`. The export does not create a pool on its own, so supply one through the host's
-Brows.Composition setup in one of two ways:
+`Brows.Threading.ISTAThreadPool`. Configure the host's Brows.Composition setup before the export creates its
+services. The export selects a pool in this order:
 
-- Install `Brows.Win32.STAThreadPool.Composition.Exports` in the host. Its factory export satisfies the
-  optional `ISTAThreadPoolFactory` import, and the export creates a pool it owns after imports are populated and
-  empties it on shutdown.
-- Or set `Win32InteropServicesVariable.ThreadPool` to a pool created by the host, together with any other variable
-  configuration, before the export creates its services. A supplied pool remains caller-owned and is not emptied when
-  the export shuts down.
+1. Use `Win32InteropServicesVariable.ThreadPool` when it is non-null. This pool remains caller-owned and is not
+  emptied when the export shuts down.
+2. Otherwise, call the optional `ISTAThreadPoolProvider` import's `GetThreadPool` method, passing the
+  `Win32InteropServices` export instance as the target. Supply your own provider implementation through the host's
+  composition setup. A non-null result takes precedence over the factory and remains externally owned; the export
+  does not empty it on shutdown. The provider or host manages its lifetime.
+3. If the provider is absent or returns null, use the optional `ISTAThreadPoolFactory` import to create a pool.
+  Install `Brows.Win32.STAThreadPool.Composition.Exports` in the host to supply its factory export. The interop export
+  owns the pool it creates and empties it on shutdown.
 
-If the host supplies neither, configuring the export fails with an exception reporting that no STA thread pool could
-be created.
+Pool selection is completed after imports are populated. If none of these paths yields a pool, configuring the
+export fails with an exception reporting that no STA thread pool could be created.
 
 ### Console diagnostics
 
