@@ -3,10 +3,14 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Text;
 
 namespace Brows.Win32.PlatformInvoke;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 [SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "N/A")]
 internal partial class kernel32 {
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]

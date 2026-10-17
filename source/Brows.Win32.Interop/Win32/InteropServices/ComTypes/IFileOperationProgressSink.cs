@@ -1,8 +1,12 @@
 ﻿using Brows.Win32.PlatformInvoke;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 
 namespace Brows.Win32.InteropServices.ComTypes;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 [Guid(IID.IFileOperationProgressSink)]
 [ComImport]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

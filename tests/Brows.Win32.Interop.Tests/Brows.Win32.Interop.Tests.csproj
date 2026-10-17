@@ -1,6 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <TargetFrameworks>net462;net48;net8.0-windows;net10.0-windows</TargetFrameworks>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Brows.Win32.STAThreadPool" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\source\Brows.Win32.Interop\Brows.Win32.Interop.csproj" />
     <ProjectReference Include="..\Brows.Win32.Interop.Tests.ConsoleHost\Brows.Win32.Interop.Tests.ConsoleHost.csproj"

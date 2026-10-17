@@ -1,16 +1,20 @@
 ﻿using Brows.Threading;
 using Brows.Win32.Win32FileOperations;
 using System.IO;
+using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Brows.Win32;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 [TestFixture]
 public sealed class Win32FileOperationTest {
     private string TempDirectory;
     private string DestinationDirectory;
-    private STAThreadPool ThreadPool;
+    private ISTAThreadPool ThreadPool;
 
     [SetUp]
     public void SetUp() {

@@ -4,13 +4,18 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Brows.Win32;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 [TestFixture, NonParallelizable]
 public sealed class Win32ShellServiceTest {
+    private ISTAThreadPool Pool;
     private string TempDirectory;
 
     private static void CreateShortcut(string shortcutPath, string targetPath) {
@@ -34,12 +39,14 @@ public sealed class Win32ShellServiceTest {
 
     [SetUp]
     public void SetUp() {
+        Pool = (ISTAThreadPool)new STAThreadPool(nameof(Win32ShellServiceTest));
         TempDirectory = Path.Combine(Path.GetTempPath(), nameof(Win32ShellServiceTest), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(TempDirectory);
     }
 
     [TearDown]
     public void TearDown() {
+        Pool.Empty();
         if (Directory.Exists(TempDirectory)) {
             Directory.Delete(TempDirectory, recursive: true);
         }
@@ -48,7 +55,7 @@ public sealed class Win32ShellServiceTest {
     [Test]
     public void ExecuteDefault_WhenFileDoesNotExist_ThrowsWin32Exception() {
         var missing = Path.Combine(TempDirectory, "missing.txt");
-        using var service = new Win32ShellService(threadPool: null);
+        using var service = new Win32ShellService(Pool);
 
         Assert.That(async () => await service.ExecuteDefault(missing), Throws.TypeOf<Win32Exception>());
     }
@@ -56,7 +63,7 @@ public sealed class Win32ShellServiceTest {
     [Test]
     public async Task ExecuteDefault_WhenFileDoesNotExist_ReportsShellExecuteResult() {
         var missing = Path.Combine(TempDirectory, "missing.txt");
-        using var service = new Win32ShellService(threadPool: null);
+        using var service = new Win32ShellService(Pool);
 
         var exception = await Assert.ThrowsAsync<Win32Exception>(async () => await service.ExecuteDefault(missing));
 
@@ -67,7 +74,7 @@ public sealed class Win32ShellServiceTest {
     public async Task ExecuteDefault_WithInvalidExecutable_ReportsNativeError() {
         var invalidExecutable = Path.Combine(TempDirectory, "invalid.exe");
         File.WriteAllText(invalidExecutable, "This is not an executable.");
-        using var service = new Win32ShellService(threadPool: null);
+        using var service = new Win32ShellService(Pool);
 
         var exception = await Assert.ThrowsAsync<Win32Exception>(async () => await service.ExecuteDefault(invalidExecutable));
 
@@ -80,7 +87,7 @@ public sealed class Win32ShellServiceTest {
         var executable = Path.Combine(TempDirectory, "missing.exe");
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        using var service = new Win32ShellService(threadPool: null);
+        using var service = new Win32ShellService(Pool);
 
         Assert.That(
             async () => await service.ExecuteDefault(file, executable, cancellation.Token),
@@ -92,7 +99,7 @@ public sealed class Win32ShellServiceTest {
         var file = Path.Combine(TempDirectory, "document.txt");
         var missingExecutable = Path.Combine(TempDirectory, "missing.exe");
         File.WriteAllText(file, "document");
-        using var service = new Win32ShellService(threadPool: null);
+        using var service = new Win32ShellService(Pool);
 
         Assert.That(
             async () => await service.ExecuteDefault(file, missingExecutable),
@@ -132,7 +139,7 @@ public sealed class Win32ShellServiceTest {
         File.WriteAllText(conflictingDocumentPath, CreateMarkerScript(markerPath, "executable"));
         File.Copy(systemScriptHostPath, executablePath);
 
-        using var service = new Win32ShellService(threadPool: null);
+        using var service = new Win32ShellService(Pool);
         async Task OpenDocumentAndWait(string documentPath) {
             var markerCreated = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             using var markerWatcher = new FileSystemWatcher(TempDirectory, Path.GetFileName(markerPath));
@@ -176,7 +183,7 @@ public sealed class Win32ShellServiceTest {
         var missing = Path.Combine(TempDirectory, "missing.txt");
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        using var service = new Win32ShellService(threadPool: null);
+        using var service = new Win32ShellService(Pool);
 
         Assert.That(
             async () => await service.ExecuteDefault(missing, cancellation.Token),
@@ -188,7 +195,7 @@ public sealed class Win32ShellServiceTest {
         var missing = Path.Combine(TempDirectory, "missing.txt");
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        using var service = new Win32ShellService(threadPool: null);
+        using var service = new Win32ShellService(Pool);
 
         Assert.That(
             async () => await service.ExecuteProperties(missing, cancellation.Token),
@@ -199,7 +206,7 @@ public sealed class Win32ShellServiceTest {
     public async Task GetLinkPath_WhenFileIsNotShortcut_ReturnsNull() {
         var file = Path.Combine(TempDirectory, "document.txt");
         File.WriteAllText(file, "document");
-        using var service = new Win32ShellService(threadPool: null);
+        using var service = new Win32ShellService(Pool);
 
         var result = await service.GetLinkPath(file, CancellationToken.None);
 
@@ -213,7 +220,7 @@ public sealed class Win32ShellServiceTest {
         File.WriteAllText(target, "target");
         CreateShortcut(shortcutPath, target);
 
-        var pool = new STAThreadPool(nameof(GetLinkPath_WhenShortcutExists_ReturnsTargetPath));
+        var pool = (ISTAThreadPool)new STAThreadPool(nameof(GetLinkPath_WhenShortcutExists_ReturnsTargetPath));
         try {
             using var service = new Win32ShellService(pool);
             var result = await service.GetLinkPath(shortcutPath, CancellationToken.None);
@@ -234,7 +241,7 @@ public sealed class Win32ShellServiceTest {
             var shortcutPath = Path.Combine(TempDirectory, "target.lnk");
             File.WriteAllText(target, "target");
             CreateShortcut(shortcutPath, target);
-            using var service = new Win32ShellService(threadPool: null);
+            using var service = new Win32ShellService(Pool);
 
             var result = await service.GetLinkPath("target.lnk", CancellationToken.None);
 
@@ -256,7 +263,7 @@ public sealed class Win32ShellServiceTest {
             var shortcutPath = Path.Combine(shortcutDirectory, "target.lnk");
             File.WriteAllText(target, "target");
             CreateShortcut(shortcutPath, target);
-            using var service = new Win32ShellService(threadPool: null);
+            using var service = new Win32ShellService(Pool);
 
             var result = await service.GetLinkPath(
                 Path.Combine("shortcuts", "target.lnk"), CancellationToken.None);
@@ -286,7 +293,7 @@ public sealed class Win32ShellServiceTest {
 
         using var workerStarted = new ManualResetEventSlim();
         using var releaseWorker = new ManualResetEventSlim();
-        var pool = new STAThreadPool(
+        var pool = (ISTAThreadPool)new STAThreadPool(
             nameof(GetLinkPath_WhenCurrentDirectoryChangesWhileQueued_UsesCallersDirectory)) {
             WorkerCountMax = 1,
         };
@@ -330,7 +337,7 @@ public sealed class Win32ShellServiceTest {
         var shortcut = Path.Combine(TempDirectory, "missing.lnk");
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        using var service = new Win32ShellService(threadPool: null);
+        using var service = new Win32ShellService(Pool);
 
         Assert.That(
             async () => await service.GetLinkPath(shortcut, cancellation.Token),
@@ -340,7 +347,7 @@ public sealed class Win32ShellServiceTest {
     [Test]
     public void PublicMethods_AfterDispose_ThrowObjectDisposedException() {
         var missing = Path.Combine(TempDirectory, "missing.txt");
-        using var service = new Win32ShellService(threadPool: null);
+        using var service = new Win32ShellService(Pool);
         service.Dispose();
 
         using (Assert.EnterMultipleScope()) {

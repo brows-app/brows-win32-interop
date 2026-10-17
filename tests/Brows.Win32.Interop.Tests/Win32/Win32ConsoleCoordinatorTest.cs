@@ -3,12 +3,16 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
+using System.Runtime.Versioning;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Brows.Win32;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 [TestFixture]
 public sealed class Win32ConsoleCoordinatorTest {
     private const int StandardInput = -10;

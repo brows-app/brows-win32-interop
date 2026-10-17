@@ -1,9 +1,13 @@
 ﻿using Brows.Win32.InteropServices.ComTypes;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 
 namespace Brows.Win32.PlatformInvoke;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 [SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "N/A")]
 internal static class shell32 {
     public const int MAX_PATH = 260;

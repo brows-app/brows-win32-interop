@@ -4,9 +4,13 @@ using System;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 
 namespace Brows.Win32;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 internal sealed class Win32ConsoleNative : IWin32ConsoleNative {
     private const uint GenericWrite = 0x40000000;
     private const uint ControlC = 0;

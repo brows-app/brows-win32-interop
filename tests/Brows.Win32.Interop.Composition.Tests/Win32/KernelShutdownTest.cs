@@ -1,5 +1,6 @@
 ﻿using Brows.Composition;
 using Brows.Threading;
+using Brows.Win32.Tests;
 using Brows.Win32.Win32FileOperations;
 using System;
 using System.ComponentModel;
@@ -7,11 +8,15 @@ using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Brows.Win32;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 [TestFixture, NonParallelizable]
 public sealed class KernelShutdownTest {
     private Win32InteropServices Services { get; set; }
@@ -38,7 +43,9 @@ public sealed class KernelShutdownTest {
 
     [SetUp]
     public void SetUp() {
-        Services = new();
+        Services = new() {
+            ThreadPoolFactory = ThreadPoolFactories.Mock(),
+        };
         ((IExportAndVary<Win32InteropServicesVariable>)Services).Vary(null, CancellationToken.None);
         TempDirectory = Path.Combine(Path.GetTempPath(), nameof(KernelShutdownTest), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(TempDirectory);
@@ -136,7 +143,7 @@ public sealed class KernelShutdownTest {
 
     [Test]
     public async Task Kill_WhenFileOperationBatchIsPending_WaitsForItToFinish() {
-        var pool = new STAThreadPool(nameof(Win32InteropServices)) {
+        var pool = (ISTAThreadPool)new STAThreadPool(nameof(Win32InteropServices)) {
             WorkerCountMax = 1,
         };
         try {
@@ -194,7 +201,9 @@ public sealed class KernelShutdownTest {
 
     [Test]
     public void Operate_WhenServicesWereKilled_ThrowsInvalidOperationException() {
-        var services = new Win32InteropServices();
+        var services = new Win32InteropServices() {
+            ThreadPoolFactory = ThreadPoolFactories.Mock(),
+        };
         ((IExportAndVary<Win32InteropServicesVariable>)services).Vary(null, CancellationToken.None);
         var batch = ((IWin32InteropServices)services).FileOperation(TempDirectory);
         ((IExportAndKill)services).Kill();
@@ -215,7 +224,9 @@ public sealed class KernelShutdownTest {
 
     [Test]
     public void FileOperation_WhenVaryWasCalled_ReturnsOperation() {
-        var services = new Win32InteropServices();
+        var services = new Win32InteropServices() {
+            ThreadPoolFactory = ThreadPoolFactories.Mock(),
+        };
         ((IExportAndVary<Win32InteropServicesVariable>)services).Vary(null, CancellationToken.None);
 
         var operation = ((IWin32InteropServices)services).FileOperation(TempDirectory);

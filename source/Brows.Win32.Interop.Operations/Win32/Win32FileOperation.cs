@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.Versioning;
 using System.Threading.Tasks;
 
 namespace Brows.Win32;
@@ -16,6 +17,9 @@ namespace Brows.Win32;
 /// <summary>
 /// Queues a batch of Windows Shell file operations for execution on an STA worker.
 /// </summary>
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 internal sealed class Win32FileOperation : IWin32FileOperation {
     private static readonly ILog Log = Logging.For(typeof(Win32FileOperation));
 
@@ -309,14 +313,14 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
     /// <summary>
     /// Gets the caller-owned STA pool used to execute this batch.
     /// </summary>
-    public STAThreadPool ThreadPool { get; }
+    public ISTAThreadPool ThreadPool { get; }
 
     /// <summary>
     /// Creates a file-operation batch for a directory and STA pool.
     /// </summary>
     /// <param name="directory">The destination or containing directory for queued items.</param>
     /// <param name="threadPool">The STA pool that will run the batch.</param>
-    public Win32FileOperation(string directory, STAThreadPool threadPool) {
+    public Win32FileOperation(string directory, ISTAThreadPool threadPool) {
         Directory = directory;
         ThreadPool = threadPool ?? throw new ArgumentNullException(nameof(threadPool));
     }

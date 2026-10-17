@@ -1,15 +1,21 @@
 ﻿using Brows.Composition;
+using Brows.Threading;
+using Brows.Win32.Tests;
+using Microsoft.Win32.SafeHandles;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Reflection;
+using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Win32.SafeHandles;
 
 namespace Brows.Win32;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 [TestFixture]
 public sealed class Win32InteropServicesTest {
     private Win32InteropServices Services { get; set; }
@@ -22,6 +28,36 @@ public sealed class Win32InteropServicesTest {
     private TextWriter CurrentOut { get; set; }
     private TextWriter CurrentError { get; set; }
     private int KernelFactoryCallCount { get; set; }
+
+    private static async Task<IImport> InitializeImports(
+        Win32InteropServicesVariable variable,
+        params IExport[] exports) {
+        var environment = new Mock<IImportEnvironment>();
+        environment.SetupGet(item => item.ImportInfo).Returns(ImportInfo.Listed(
+            variables: () => new ImportVariables(variable),
+            list: () => exports));
+        /*
+         * Create an isolated agent because Imports.Init initializes process-wide state only once.
+         * Population, variable configuration, and shutdown still run through the real container.
+         */
+        var agentType = typeof(Imports).Assembly.GetType(
+            "Brows.Composition.ImportAgents.ImportAgent", throwOnError: true);
+        var imports = (IImport)Activator.CreateInstance(
+            agentType,
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            args: new object[] { environment.Object },
+            culture: null);
+        try {
+            var initialize = agentType.GetMethod("Init", BindingFlags.Instance | BindingFlags.Public);
+            await ((Task)initialize.Invoke(imports, new object[] { CancellationToken.None }));
+            return imports;
+        }
+        catch {
+            imports.Kill();
+            throw;
+        }
+    }
 
     [SetUp]
     public void SetUp() {
@@ -65,7 +101,9 @@ public sealed class Win32InteropServicesTest {
         Services = new(() => {
             KernelFactoryCallCount++;
             return new Win32KernelService(Coordinator);
-        });
+        }) {
+            ThreadPoolFactory = ThreadPoolFactories.Mock(),
+        };
         ((IExportAndVary<Win32InteropServicesVariable>)Services).Vary(null, CancellationToken.None)
             .GetAwaiter()
             .GetResult();
@@ -82,6 +120,68 @@ public sealed class Win32InteropServicesTest {
             OriginalOut.Dispose();
             OriginalError.Dispose();
         }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task Composition_WhenPoolIsSupplied_UsesCallerOwnedPool(bool factoryAvailable) {
+        var pool = new Mock<ISTAThreadPool>(MockBehavior.Strict);
+        pool.Setup(item => item.Work(
+                nameof(Win32ShellService.ExecuteDefault), It.IsAny<Action>(), CancellationToken.None))
+            .Returns(Task.CompletedTask);
+        var services = new Win32InteropServices();
+        var variable = new Win32InteropServicesVariable { ThreadPool = pool.Object };
+        var factory = new Mock<ISTAThreadPoolFactory>(MockBehavior.Strict);
+        IExport[] exports = factoryAvailable ? [services, factory.Object] : [services];
+        var imports = await InitializeImports(variable, exports);
+        try {
+            var exported = imports.Find<IWin32InteropServices>(throwIfNotFound: true);
+            await exported.ExecuteDefault("unused");
+            pool.Verify(item => item.Work(
+                nameof(Win32ShellService.ExecuteDefault), It.IsAny<Action>(), CancellationToken.None), Times.Once);
+            Assert.That(services.ThreadPoolFactory, Is.SameAs(factoryAvailable ? factory.Object : null));
+        }
+        finally {
+            imports.Kill();
+        }
+        pool.Verify(item => item.Empty(), Times.Never);
+        factory.Verify(item => item.Create(It.IsAny<string>(), It.IsAny<STAThreadPoolOptions>()), Times.Never);
+    }
+
+    [Test]
+    public async Task Composition_WhenFactoryCreatesPool_EmptiesOwnedPoolOnShutdown() {
+        var pool = new Mock<ISTAThreadPool>(MockBehavior.Strict);
+        pool.Setup(item => item.Work(
+                nameof(Win32ShellService.ExecuteDefault), It.IsAny<Action>(), CancellationToken.None))
+            .Returns(Task.CompletedTask);
+        pool.Setup(item => item.Empty());
+        var factory = new Mock<ISTAThreadPoolFactory>(MockBehavior.Strict);
+        factory.Setup(item => item.Create(nameof(Win32InteropServices), It.IsAny<STAThreadPoolOptions>()))
+            .Returns(pool.Object);
+        var services = new Win32InteropServices();
+        var imports = await InitializeImports(new Win32InteropServicesVariable(), services, factory.Object);
+        try {
+            var exported = imports.Find<IWin32InteropServices>(throwIfNotFound: true);
+            await exported.ExecuteDefault("unused");
+            pool.Verify(item => item.Work(
+                nameof(Win32ShellService.ExecuteDefault), It.IsAny<Action>(), CancellationToken.None), Times.Once);
+            Assert.That(services.ThreadPoolFactory, Is.SameAs(factory.Object));
+        }
+        finally {
+            imports.Kill();
+        }
+        factory.Verify(
+            item => item.Create(nameof(Win32InteropServices), It.IsAny<STAThreadPoolOptions>()), Times.Once);
+        pool.Verify(item => item.Empty(), Times.Once);
+    }
+
+    [Test]
+    public void Composition_WhenNeitherPoolNorFactoryIsSupplied_ReportsMissingPool() {
+        var services = new Win32InteropServices();
+        Assert.That(
+            async () => await InitializeImports(new Win32InteropServicesVariable(), services),
+            Throws.TypeOf<TargetInvocationException>()
+                .With.InnerException.Message.EqualTo("Unable to create an STA thread pool."));
     }
 
     [Test]

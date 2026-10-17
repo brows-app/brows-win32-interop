@@ -1,8 +1,12 @@
 ﻿using Brows.Win32.InteropServices.ComTypes;
 using Brows.Win32.PlatformInvoke;
+using System.Runtime.Versioning;
 
 namespace Brows.Win32.InteropServices;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 internal abstract class FileOperationProgressSink : IFileOperationProgressSink {
     private const HRESULT S_OK = HRESULT.S_OK;
 

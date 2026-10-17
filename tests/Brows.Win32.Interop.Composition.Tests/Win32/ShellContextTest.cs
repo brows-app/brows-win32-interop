@@ -1,21 +1,26 @@
 ﻿using Brows.Composition;
 using Brows.Threading;
+using Brows.Win32.Tests;
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Brows.Win32;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 [TestFixture]
 public sealed class ShellContextTest {
     [Test]
     public async Task FileOperation_WhenCallerContextIsNotPumped_CompletesAndReleasesShutdown() {
         var services = new Win32InteropServices();
-        var pool = new STAThreadPool(nameof(FileOperation_WhenCallerContextIsNotPumped_CompletesAndReleasesShutdown)) {
+        var pool = (ISTAThreadPool)new STAThreadPool(nameof(FileOperation_WhenCallerContextIsNotPumped_CompletesAndReleasesShutdown)) {
             WorkerCountMax = 1,
         };
         var context = new RecordingSynchronizationContext();
@@ -96,7 +101,9 @@ public sealed class ShellContextTest {
 
     [Test]
     public void UseServices_WhenInnerTaskCompletesUnderCallerContext_DoesNotPostContinuation() {
-        var services = new Win32InteropServices();
+        var services = new Win32InteropServices() {
+            ThreadPoolFactory = ThreadPoolFactories.Mock(),
+        };
         ((IExportAndVary<Win32InteropServicesVariable>)services).Vary(null, CancellationToken.None);
         var innerTask = new TaskCompletionSource<bool>();
         var context = new RecordingSynchronizationContext();

@@ -8,11 +8,22 @@ Windows Shell and file-system interop for .NET. This package provides higher-lev
 dotnet add package Brows.Win32.Interop
 ```
 
-The package targets .NET Framework 4.6.2 and 4.8, and .NET 8 and 10 on Windows. It calls Windows APIs and must run on Windows.
+The package targets .NET Framework 4.6.2 and 4.8, as well as the platform-neutral .NET 8 and 10 targets; the service types are annotated `[SupportedOSPlatform("windows")]`. It calls Windows APIs and must run on Windows.
 
 ## Use the services
 
+The example below creates a concrete `STAThreadPool`. Install its implementation package separately:
+
+```powershell
+dotnet add package Brows.Win32.STAThreadPool
+```
+
+On .NET 8 and 10, the project consuming this implementation must target `net8.0-windows` or
+`net10.0-windows`, respectively. The `ISTAThreadPool` interface is supplied by
+`Brows.Win32.STAThreadPool.Contracts`; use an interface variable to call `Work` and `Empty`.
+
 ```csharp
+using Brows.Threading;
 using Brows.Win32;
 using System.Threading;
 
@@ -27,9 +38,15 @@ bool sameFile = kernel.PathsAreEquivalent(firstPath, secondPath);
 bool caseSensitive = kernel.PathIsCaseSensitive(directoryPath);
 string storedPath = kernel.GetStoredPath(@"C:\DATA\REPORT.TXT");
 
-using var shell = new Win32ShellService(threadPool: null);
-await shell.ExecuteDefault(documentPath, CancellationToken.None);
-string targetPath = await shell.GetLinkPath(shortcutPath, CancellationToken.None);
+ISTAThreadPool pool = new STAThreadPool("shell");
+try {
+    using var shell = new Win32ShellService(pool);
+    await shell.ExecuteDefault(documentPath, CancellationToken.None);
+    string targetPath = await shell.GetLinkPath(shortcutPath, CancellationToken.None);
+}
+finally {
+    pool.Empty();
+}
 ```
 
 `PathsAreEquivalent` compares the identity of existing files or directories, rather than their path text. `PathIsCaseSensitive` queries a directory's case-sensitivity flag and returns `false` when the query is unsupported. Other query failures throw.
@@ -46,7 +63,7 @@ and a native lookup failure throws `Win32Exception`. Paths exceeding the runtime
 
 `ExecuteDefault` runs the default Shell verb for a path. Its overload `ExecuteDefault(file, with, cancellationToken)` opens `file` with the specified executable. `ExecuteProperties` opens the Properties verb. These methods return `Task`; await them to observe errors. Shell work runs on an STA worker. An optional cancellation token can stop work before dispatch, but cannot interrupt a native Shell call already in progress.
 
-`GetLinkPath` resolves a `.lnk` shortcut and returns its target path, or `null` for a non-shortcut or a lookup failure. Cancellation is propagated. `Win32ShellService` can use a supplied `Brows.Threading.STAThreadPool`; passing `null` creates a pool owned by the service. Dispose the service after its operations finish.
+`GetLinkPath` resolves a `.lnk` shortcut and returns its target path, or `null` for a non-shortcut or a lookup failure. Cancellation is propagated. `Win32ShellService` requires a supplied `Brows.Threading.ISTAThreadPool` from the `Brows.Win32.STAThreadPool.Contracts` package; the pool remains caller-owned and is not emptied when the service is disposed. Dispose the service after its operations finish.
 
 ## Diagnostic console
 

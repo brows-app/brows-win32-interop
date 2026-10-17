@@ -1,5 +1,4 @@
 ﻿using Brows.Operations;
-using Brows.Threading;
 using Brows.Win32.Win32FileOperations;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -84,11 +83,6 @@ public interface IWin32FileOperation {
     /// Gets or sets whether Shell progress UI is suppressed in favor of the supplied progress receiver.
     /// </summary>
     bool Silent { get; set; }
-
-    /// <summary>
-    /// Gets the caller-owned STA pool used to execute this batch.
-    /// </summary>
-    STAThreadPool ThreadPool { get; }
 
     /// <summary>
     /// Executes the queued operations through the Windows Shell.

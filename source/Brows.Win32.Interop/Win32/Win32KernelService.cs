@@ -4,6 +4,7 @@ using System;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Text;
 
 namespace Brows.Win32;
@@ -17,6 +18,9 @@ namespace Brows.Win32;
 /// On Windows 10 and later, native standard-handle ownership is checked by object identity. Earlier Windows versions
 /// compare numeric values, so keep handles installed by console allocation open until FreeConsole completes.
 /// </remarks>
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 public sealed class Win32KernelService : Win32BaseService {
     private readonly Win32ConsoleCoordinator ConsoleCoordinator;
 

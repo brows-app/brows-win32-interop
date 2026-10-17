@@ -1,11 +1,15 @@
 ﻿using Microsoft.Win32.SafeHandles;
 using System;
 using System.IO;
+using System.Runtime.Versioning;
 using System.Text;
 using System.Threading;
 
 namespace Brows.Win32;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 internal sealed class Win32ConsoleCoordinator {
     private const int StandardInputHandle = -10;
     private const int StandardHandleCount = 3;

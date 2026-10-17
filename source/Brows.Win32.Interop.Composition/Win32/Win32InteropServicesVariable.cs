@@ -11,12 +11,17 @@ public sealed class Win32InteropServicesVariable : IExportVariable {
     /// <summary>
     /// Gets or sets the STA pool used for Shell actions and batched file operations.
     /// </summary>
-    /// <value>The pool to use, or <see langword="null"/> to create a pool owned by the export.</value>
+    /// <value>
+    /// The pool to use, or <see langword="null"/> to have the export create a pool it owns through the host's
+    /// <see cref="ISTAThreadPoolFactory"/> import.
+    /// </value>
     /// <remarks>
     /// Apply this configuration before the export creates its underlying services. A supplied pool remains
-    /// caller-owned and is not emptied when the export shuts down.
+    /// caller-owned and is not emptied when the export shuts down; a pool created by the export is emptied when
+    /// the export shuts down. When no pool is supplied, the host composition must supply an
+    /// <see cref="ISTAThreadPoolFactory"/> import, which the export uses to create the pool.
     /// </remarks>
-    public STAThreadPool ThreadPool { get; set; }
+    public ISTAThreadPool ThreadPool { get; set; }
 
     /// <summary>
     /// Gets or sets the callback that supplies the owner window for Shell UI shown by file-operation batches.

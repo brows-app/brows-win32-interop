@@ -9,9 +9,10 @@ Composition exports for the Win32 file queries and Windows Shell actions in `Bro
 dotnet add package Brows.Win32.Interop.Composition
 ```
 
-This package depends on `Brows.Composition` and `Brows.Win32.Interop.Operations`, which in turn depends on
-`Brows.Win32.Interop`. It targets .NET Framework 4.6.2 and 4.8, and .NET 8 and 10 on Windows. It calls Windows APIs
-and must run on Windows.
+This package depends on `Brows.Win32.STAThreadPool.Composition`, which depends on `Brows.Composition`, and on
+`Brows.Win32.Interop.Operations`, which in turn depends on `Brows.Win32.Interop`. It targets .NET Framework 4.6.2 and
+4.8 as well as the platform-neutral .NET 8 and 10 targets; the exported services are annotated
+`[SupportedOSPlatform("windows")]`. It calls Windows APIs and must run on Windows.
 
 ## Use the exported services
 
@@ -62,6 +63,22 @@ use backslashes and omit `.` and `..` navigation. Bare device objects are reject
 Alternate data streams are unsupported; an ordinary ADS path throws `NotSupportedException` on .NET Framework
 and a native lookup failure throws `Win32Exception`. Paths exceeding the runtime's permitted length throw
 `PathTooLongException`.
+
+### STA thread pool
+
+The exported services run Shell actions and batched file operations on an STA worker obtained from a
+`Brows.Threading.ISTAThreadPool`. The export does not create a pool on its own, so supply one through the host's
+Brows.Composition setup in one of two ways:
+
+- Install `Brows.Win32.STAThreadPool.Composition.Exports` in the host. Its factory export satisfies the
+  optional `ISTAThreadPoolFactory` import, and the export creates a pool it owns after imports are populated and
+  empties it on shutdown.
+- Or set `Win32InteropServicesVariable.ThreadPool` to a pool created by the host, together with any other variable
+  configuration, before the export creates its services. A supplied pool remains caller-owned and is not emptied when
+  the export shuts down.
+
+If the host supplies neither, configuring the export fails with an exception reporting that no STA thread pool could
+be created.
 
 ### Console diagnostics
 

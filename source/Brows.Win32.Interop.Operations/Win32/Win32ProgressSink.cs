@@ -2,9 +2,13 @@
 using Brows.Win32.InteropServices;
 using Brows.Win32.InteropServices.ComTypes;
 using Brows.Win32.PlatformInvoke;
+using System.Runtime.Versioning;
 
 namespace Brows.Win32;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 internal sealed class Win32ProgressSink : FileOperationProgressSink {
     private HRESULT CancellationResult => CancellationToken.IsCancellationRequested
         ? HRESULTExtension.FromWin32(winerror.ERROR_CANCELLED)

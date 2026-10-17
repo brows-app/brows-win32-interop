@@ -1,9 +1,13 @@
 ﻿using System;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Threading;
 
 namespace Brows.Win32.InteropServices;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 internal abstract class ComObjectWrapper<T> : IDisposable where T : class {
     private readonly Lazy<T> LazyComObject;
     private readonly

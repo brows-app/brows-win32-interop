@@ -6,6 +6,7 @@ using System;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Threading.Tasks;
 
 namespace Brows.Win32;
@@ -13,9 +14,11 @@ namespace Brows.Win32;
 /// <summary>
 /// Executes Windows Shell verbs and resolves shortcut targets on STA workers.
 /// </summary>
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 public sealed class Win32ShellService : Win32BaseService {
-    private readonly bool ThreadPoolOwned;
-    private readonly STAThreadPool ThreadPool;
+    private readonly ISTAThreadPool ThreadPool;
 
     private static readonly ILog Log = Logging.For(typeof(Win32ShellService));
 
@@ -64,25 +67,16 @@ public sealed class Win32ShellService : Win32BaseService {
     }
 
     private protected sealed override void DisposeCore() {
-        try {
-            if (ThreadPoolOwned) {
-                ThreadPool.Empty();
-            }
-        }
-        catch (Exception ex) {
-            if (Log.Warn()) {
-                Log.Warn(ex);
-            }
-        }
     }
 
     /// <summary>
-    /// Creates a Shell service with a supplied STA pool or a service-owned pool.
+    /// Creates a Shell service with a supplied STA pool.
     /// </summary>
-    /// <param name="threadPool">The STA pool to use, or <see langword="null"/> to create one.</param>
-    public Win32ShellService(STAThreadPool threadPool) {
-        ThreadPool = threadPool ?? new(nameof(Win32ShellService));
-        ThreadPoolOwned = ThreadPool != threadPool;
+    /// <param name="threadPool">
+    /// The caller-owned STA pool to use. The pool is not emptied when the service is disposed.
+    /// </param>
+    public Win32ShellService(ISTAThreadPool threadPool) {
+        ThreadPool = threadPool ?? throw new ArgumentNullException(nameof(threadPool));
     }
 
     /// <summary>

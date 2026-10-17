@@ -2,11 +2,15 @@
 using Brows.Threading;
 using Domore.Logs;
 using System;
+using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Brows.Win32;
 
+#if !NETFRAMEWORK
+[SupportedOSPlatform("windows")]
+#endif
 internal sealed class Win32InteropServices : IWin32InteropServices,
                                              IExportAndVary<Win32InteropServicesVariable>,
                                              IExportAndKill {
@@ -19,12 +23,28 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
     private bool Killing;
     private bool Killed;
     private bool ThreadPoolOwned;
-    private STAThreadPool ThreadPool;
+    private ISTAThreadPool ThreadPool;
     private int ActiveOperationCount;
     private Func<IntPtr> OnGetOwnerWindow;
 
-    private STAThreadPool ThreadPoolNotNull =>
+    private ISTAThreadPool ThreadPoolNotNull =>
         ThreadPool ?? throw new InvalidOperationException("The STA thread pool is null.");
+
+    [ImportsPopulatedCallback]
+    private void InitializeThreadPool() {
+        lock (Locker) {
+            var shuttingDown = Killing || Killed;
+            if (shuttingDown) {
+                throw new InvalidOperationException("The Win32 interop services have already been killed.");
+            }
+            if (ThreadPool is not null) {
+                return;
+            }
+            ThreadPool = ThreadPoolFactory?.Create(nameof(Win32InteropServices), new())
+                ?? throw new InvalidOperationException("Unable to create an STA thread pool.");
+            ThreadPoolOwned = true;
+        }
+    }
 
     private Task<T> UseServices<T>(Func<ServiceWrapper, CancellationToken, Task<T>> function,
                                    CancellationToken cancellationToken) {
@@ -67,6 +87,9 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
         });
     }
 
+    [ImportOptional]
+    internal ISTAThreadPoolFactory ThreadPoolFactory { get; set; }
+
     internal Win32InteropServices(Func<Win32KernelService> kernelFactory) {
         if (kernelFactory is null) {
             throw new ArgumentNullException(nameof(kernelFactory));
@@ -98,7 +121,11 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
             if (LazyServices.IsValueCreated) {
                 throw new InvalidOperationException("The Win32 interop services have already been created.");
             }
-            ThreadPool = threadPool ?? new(nameof(Win32InteropServices));
+            /*
+             * Composition supplies variables before populating imports. If the factory is not yet available,
+             * InitializeThreadPool creates the pool after import population.
+             */
+            ThreadPool = threadPool ?? ThreadPoolFactory?.Create(nameof(Win32InteropServices), new());
             ThreadPoolOwned = ThreadPool != threadPool;
         }
         OnGetOwnerWindow = variable?.OnGetOwnerWindow;
@@ -107,7 +134,7 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
 
     void IExportAndKill.Kill() {
         ServiceWrapper services;
-        STAThreadPool threadPool;
+        ISTAThreadPool threadPool;
         bool threadPoolOwned;
         lock (Locker) {
             if (Killed) {
@@ -253,9 +280,9 @@ internal sealed class Win32InteropServices : IWin32InteropServices,
         public Win32KernelService Kernel { get; }
         public Win32ShellService Shell { get; }
 
-        public STAThreadPool ThreadPool { get; }
+        public ISTAThreadPool ThreadPool { get; }
 
-        public ServiceWrapper(STAThreadPool threadPool, Func<Win32KernelService> kernelFactory) {
+        public ServiceWrapper(ISTAThreadPool threadPool, Func<Win32KernelService> kernelFactory) {
             ThreadPool = threadPool;
             Kernel = kernelFactory();
             Shell = new(ThreadPool);
