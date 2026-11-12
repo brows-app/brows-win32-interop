@@ -322,54 +322,6 @@ class is the same as the namespace of the type it tests.
 - Keep tests and shared test helpers compatible with all applicable target
   frameworks.
 
-## Code reviews
-
-When asked to review code, inspect the entire requested scope thoroughly and
-identify all bugs and issues you can find. Write the findings to `Review.md` in
-the directory `_agents` in the repository root. Number each issue so it can be
-referenced later. For every issue, describe the problem and a way to resolve it.
-Cite specific file names and line numbers where applicable. Review existing
-findings in `Review.md` before editing it so relevant issues are retained or
-updated without duplication. Keep review issue numbers stable: never renumber
-existing issues or reuse their numbers, including those marked resolved. However,
-do not search the Git history for a `Review.md` if one does not exist: in that
-case, simply create a new `Review.md` and start with issue #1. Assign each new
-issue a number greater than the highest issue number already used in `Review.md`.
-
-> The full path to `Review.md` should be `{root}/_agents/Review.md`.
-
-When asked to fix issues from `Review.md`, work only on the issue numbers
-specified in the request. Prefer red/green testing: first add a test that fails
-because of each issue, then fix the code, then rerun the previously failing test
-to confirm it passes. Once an issue is resolved, keep it in `Review.md` and mark
-it as resolved in that issue's heading; do not remove it.
-
-If worktrees are explicitly requested for fixing multiple issues, create a
-separate Git worktree for each requested issue number. Place each worktree
-directory directly in the parent directory of the original repository root,
-as a sibling of that repository. Name it
-`_agent-{original-directory-name}-{issue-number}`, where
-`original-directory-name` is the name of the original repository's root directory.
-Name each worktree branch
-`agent/{issue-number}/{short-description}`. Fix, test, and update `Review.md`
-for that issue in its own worktree. Commit each issue's changes on
-its worktree branch. The first line of the commit message must start with
-`Fix #{issue-number}.`, followed by a blank line and a description of what was
-broken and how it was fixed. Once the commit is ready, notify the requester
-that the worktree branch is ready to be merged.
-
-> The `{short-description}` in branch names should be hyphenated, for example,
-> `agent/5/validate-arguments`.
-
-Before reporting completion, review the final diff for unintended changes,
-whitespace problems, and accidental public API additions. Check new and untracked
-files as well as tracked changes, and confirm that the changes match the request.
-
-Report completion consistently: summarize what changed, list resolved issue
-numbers when applicable, and state which tests or checks ran and their results.
-Identify any checks that could not run. For worktree fixes, include the branch
-name and commit hash that are ready to be merged.
-
 ## Planning
 
 When asked to plan code changes, write your plan to `Plan-{short-description}.md`
