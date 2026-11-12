@@ -39,7 +39,13 @@ internal sealed class Win32ProgressSink : FileOperationProgressSink {
         if (cancellationResult != HRESULT.S_OK) {
             return cancellationResult;
         }
-        Progress?.Change(setProgress: iWorkSoFar, setTarget: iWorkTotal);
+        /*
+         * Shell progress values are estimated work points, not byte counts.
+         */
+        Progress?.Change(
+            setProgress: iWorkSoFar,
+            setTarget: iWorkTotal,
+            kind: OperationProgressKind.None);
         return base.UpdateProgress(iWorkTotal, iWorkSoFar);
     }
 }
