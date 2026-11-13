@@ -3,7 +3,9 @@
 namespace Brows.Win32.PlatformInvoke;
 
 [SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "N/A")]
+#pragma warning disable CS8981 // The type name only contains lower-cased ascii characters
 internal static class winerror {
+#pragma warning restore CS8981 // The type name only contains lower-cased ascii characters
     public const uint ERROR_SUCCESS = 0;
     public const uint ERROR_SHARING_VIOLATION = 32;
     public const uint ERROR_FILE_EXISTS = 80;

@@ -1,6 +1,6 @@
 ﻿[assembly: ComVisible(false)]
 [assembly: InternalsVisibleTo("Brows.Win32.Interop.Operations")]
 [assembly: InternalsVisibleTo("Brows.Win32.Interop.Tests")]
-
 [assembly: InternalsVisibleTo("Brows.Win32.Interop.Composition.Tests")]
+[assembly: InternalsVisibleTo("Brows.Win32.Interop.Operations.Tests")]
 [assembly: InternalsVisibleTo("DynamicProxyGenAssembly2")]

@@ -10,9 +10,17 @@ namespace Brows.Win32;
 [SupportedOSPlatform("windows")]
 #endif
 internal sealed class Win32ProgressSink : FileOperationProgressSink {
-    private HRESULT CancellationResult => CancellationToken.IsCancellationRequested
-        ? HRESULTExtension.FromWin32(winerror.ERROR_CANCELLED)
-        : HRESULT.S_OK;
+    private volatile bool CancellationReturned;
+
+    private HRESULT GetCancellationResult() {
+        if (CancellationToken.IsCancellationRequested) {
+            CancellationReturned = true;
+            return HRESULTExtension.FromWin32(winerror.ERROR_CANCELLED);
+        }
+        return HRESULT.S_OK;
+    }
+
+    internal bool CancellationReported => CancellationReturned;
 
     public IOperationProgress Progress { get; }
     public CancellationToken CancellationToken { get; }
@@ -22,20 +30,20 @@ internal sealed class Win32ProgressSink : FileOperationProgressSink {
         CancellationToken = cancellationToken;
     }
 
-    public sealed override HRESULT StartOperations() => CancellationResult;
+    public sealed override HRESULT StartOperations() => GetCancellationResult();
 
-    public sealed override HRESULT PreRenameItem(uint dwFlags, IShellItem psiItem, string pszNewName) => CancellationResult;
+    public sealed override HRESULT PreRenameItem(uint dwFlags, IShellItem psiItem, string pszNewName) => GetCancellationResult();
 
-    public sealed override HRESULT PreMoveItem(uint dwFlags, IShellItem psiItem, IShellItem psiDestinationFolder, string pszNewName) => CancellationResult;
+    public sealed override HRESULT PreMoveItem(uint dwFlags, IShellItem psiItem, IShellItem psiDestinationFolder, string pszNewName) => GetCancellationResult();
 
-    public sealed override HRESULT PreCopyItem(uint dwFlags, IShellItem psiItem, IShellItem psiDestinationFolder, string pszNewName) => CancellationResult;
+    public sealed override HRESULT PreCopyItem(uint dwFlags, IShellItem psiItem, IShellItem psiDestinationFolder, string pszNewName) => GetCancellationResult();
 
-    public sealed override HRESULT PreDeleteItem(uint dwFlags, IShellItem psiItem) => CancellationResult;
+    public sealed override HRESULT PreDeleteItem(uint dwFlags, IShellItem psiItem) => GetCancellationResult();
 
-    public sealed override HRESULT PreNewItem(uint dwFlags, IShellItem psiDestinationFolder, string pszNewName) => CancellationResult;
+    public sealed override HRESULT PreNewItem(uint dwFlags, IShellItem psiDestinationFolder, string pszNewName) => GetCancellationResult();
 
     public sealed override HRESULT UpdateProgress(uint iWorkTotal, uint iWorkSoFar) {
-        var cancellationResult = CancellationResult;
+        var cancellationResult = GetCancellationResult();
         if (cancellationResult != HRESULT.S_OK) {
             return cancellationResult;
         }

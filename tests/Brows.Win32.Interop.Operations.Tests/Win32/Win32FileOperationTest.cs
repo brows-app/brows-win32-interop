@@ -1,5 +1,7 @@
-﻿using Brows.Threading;
+﻿using Brows.Operations;
+using Brows.Threading;
 using Brows.Win32.Win32FileOperations;
+using System;
 using System.IO;
 using System.Runtime.Versioning;
 using System.Threading;
@@ -113,9 +115,49 @@ public sealed class Win32FileOperationTest {
         using (Assert.EnterMultipleScope()) {
             Assert.That(
                 async () => await operation.Operate(progress: null, token: cancellation.Token),
-                Throws.InstanceOf<OperationCanceledException>());
+                Throws.InstanceOf<OperationCanceledException>()
+                    .With.Property(nameof(OperationCanceledException.CancellationToken))
+                    .EqualTo(cancellation.Token));
             Assert.That(File.Exists(Path.Combine(DestinationDirectory, "not-created.txt")), Is.False);
         }
+    }
+
+    [Test]
+    public void Operate_WhenTokenIsCanceledDuringShellProgress_ThrowsWithToken() {
+        var sources = new[] {
+            Path.Combine(TempDirectory, "first.txt"),
+            Path.Combine(TempDirectory, "second.txt")
+        };
+        var operation = NewOperation();
+        foreach (var source in sources) {
+            File.WriteAllText(source, "content");
+            operation.CopyFiles.Add(new CopyFile { Path = source });
+        }
+        using var cancellation = new CancellationTokenSource();
+        var progress = new Mock<IOperationProgress>();
+        progress
+            .Setup(p => p.Change(
+                It.IsAny<long?>(),
+                It.IsAny<long?>(),
+                It.IsAny<long?>(),
+                It.IsAny<long?>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<OperationProgressKind?>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<IFormatProvider>()))
+            .Callback(cancellation.Cancel);
+
+        Assert.That(
+            async () => await operation.Operate(progress.Object, cancellation.Token),
+            Throws.InstanceOf<OperationCanceledException>()
+                .With.Property(nameof(OperationCanceledException.CancellationToken))
+                .EqualTo(cancellation.Token));
     }
 
     [Test]

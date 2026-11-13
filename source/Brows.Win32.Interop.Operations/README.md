@@ -48,8 +48,36 @@ The `Operate` result is `false` for an empty batch and `true` when a nonempty ba
 Options such as `Silent`, `NoConfirmation`, `RenameOnCollision`, and `RecycleOnDelete` control Windows Shell behavior. With the default `Silent = false`, Windows can show its own progress UI. To receive progress through `IOperationProgress`, set `Silent = true` and pass a progress receiver to `Operate`. For batches created through the Composition export, configure the Shell UI owner window with `Win32InteropServicesVariable.OnGetOwnerWindow` before the export creates its services. See the [Composition README](../Brows.Win32.Interop.Composition/README.md#file-operation-owner-window) for setup. The callback runs on the STA worker during `Operate` and must not synchronously wait on a thread that could be waiting for the batch.
 
 Progress and target values are Windows Shell estimates in work points. The progress sink explicitly
-reports these with Brows.Operations 1.5.0's `OperationProgressKind.None`. They are not byte counts, so
+reports these with `OperationProgressKind.None`. They are not byte counts, so
 `OperationProgressKind.FileSize` does not apply to these callbacks.
+
+## Cancellation in operation trees
+
+When the token stops a batch, `Operate` throws an `OperationCanceledException` that carries that token.
+This includes a batch that the Shell stops after a progress callback reports cancellation, even when the
+Shell itself reports success; such a batch may have completed only some of its items. Brows.Operations
+1.6.0 classifies an `OperationCanceledException` as cancellation only when the operation's token is
+canceled or the exception carries a canceled token known to the operation tree, so pass the delegate's
+token to `Operate`. If a token from a source the delegate creates, such as a timeout, is the only one
+canceled, the operation records the cancellation as a failure.
+
+```csharp
+using Brows.Operations;
+
+OperationResult result = await progress.Child(
+    "Archive",
+    async (child, token) => {
+        await batch.Operate(child, token);
+    },
+    OperationFailureBehavior.Record,
+    default);
+```
+
+When only the child operation is canceled, a canceled batch produces an `OperationResultKind.Canceled`
+outcome under `Record`, rather than `Succeeded` or `Failed`. When the parent operation or a token supplied to
+`Child` is canceled, `Child` throws `OperationCanceledException` under either policy instead of returning a
+result, so code after the `await` does not run; put required cleanup in a `finally` block. Use
+`OperationFailureBehavior.Throw` when later work depends on the batch.
 
 ## License
 

@@ -91,5 +91,9 @@ public interface IWin32FileOperation {
     /// <param name="token">Cancels queued work and requests cancellation during Shell progress callbacks.</param>
     /// <returns><see langword="true"/> when at least one operation was queued for native execution; otherwise, <see langword="false"/>.</returns>
     /// <remarks>The result does not indicate whether every individual operation succeeded.</remarks>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="token"/> stops the batch before or during Shell execution. The exception carries
+    /// <paramref name="token"/>, and a batch stopped during execution may have completed only some items.
+    /// </exception>
     Task<bool> Operate(IOperationProgress progress, CancellationToken token);
 }

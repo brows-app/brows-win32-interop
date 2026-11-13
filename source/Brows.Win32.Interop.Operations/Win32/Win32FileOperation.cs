@@ -158,6 +158,16 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
                     CancellationToken.ThrowIfCancellationRequested();
                     var performHr = FileOperation.PerformOperations();
                     var abortedHr = FileOperation.GetAnyOperationsAborted(out var aborted);
+                    /*
+                     * The Shell can stop after the sink returns ERROR_CANCELLED and still report S_OK
+                     * without aborted operations. Report that stop as cancellation carrying the token so
+                     * operation trees classify it as cancellation instead of success or an ordinary failure.
+                     */
+                    if (progressSink.CancellationReported) {
+                        throw new OperationCanceledException(
+                            "The Shell file operation was canceled.",
+                            CancellationToken);
+                    }
                     performHr.ThrowOnError();
                     abortedHr.ThrowOnError();
 
@@ -332,6 +342,10 @@ internal sealed class Win32FileOperation : IWin32FileOperation {
     /// <param name="token">Cancels queued work and requests cancellation during Shell progress callbacks.</param>
     /// <returns><see langword="true"/> when at least one operation was queued for native execution; otherwise, <see langword="false"/>.</returns>
     /// <remarks>The result does not indicate whether every individual operation succeeded.</remarks>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="token"/> stops the batch before or during Shell execution. The exception carries
+    /// <paramref name="token"/>, and a batch stopped during execution may have completed only some items.
+    /// </exception>
     public async Task<bool> Operate(IOperationProgress progress, CancellationToken token) {
         var agent = new Win32FileOperation(Directory, ThreadPool) {
             AddUndoRecord = AddUndoRecord,
