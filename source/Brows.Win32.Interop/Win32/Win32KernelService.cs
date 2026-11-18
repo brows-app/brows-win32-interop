@@ -48,6 +48,25 @@ public sealed class Win32KernelService : Win32BaseService {
         ConsoleCoordinator = consoleCoordinator ?? throw new ArgumentNullException(nameof(consoleCoordinator));
     }
 
+    internal static bool CaseSensitiveQueryIsUnsupported(NTSTATUS status) {
+        /*
+         * File systems that do not implement the case-sensitivity query reject its
+         * information class in different ways: the FAT driver returns
+         * STATUS_INVALID_PARAMETER, and other file systems and redirectors can
+         * return STATUS_INVALID_DEVICE_REQUEST.
+         */
+        switch (status) {
+            case NTSTATUS.STATUS_NOT_IMPLEMENTED:
+            case NTSTATUS.STATUS_NOT_SUPPORTED:
+            case NTSTATUS.STATUS_INVALID_INFO_CLASS:
+            case NTSTATUS.STATUS_INVALID_PARAMETER:
+            case NTSTATUS.STATUS_INVALID_DEVICE_REQUEST:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     /// <summary>
     /// Initializes a new instance of the Win32 kernel service.
     /// </summary>
@@ -340,7 +359,10 @@ public sealed class Win32KernelService : Win32BaseService {
     /// Queries whether a directory is configured for case-sensitive name lookup.
     /// </summary>
     /// <param name="path">The directory path to query.</param>
-    /// <returns><see langword="true"/> when case-sensitive lookup is enabled; <see langword="false"/> when it is disabled or the query is unsupported.</returns>
+    /// <returns>
+    /// <see langword="true"/> when case-sensitive lookup is enabled; <see langword="false"/> when it is disabled or
+    /// the query is unsupported, as on FAT volumes and other file systems that do not implement it.
+    /// </returns>
     /// <exception cref="IOException">The native query fails for a reason other than an unsupported query.</exception>
     public bool PathIsCaseSensitive(string path) {
         BeginOperation();
@@ -374,17 +396,14 @@ public sealed class Win32KernelService : Win32BaseService {
                     ref fcsi,
                     size,
                     FILE_INFORMATION_CLASS.FileCaseSensitiveInformation);
-                switch (status) {
-                    case NTSTATUS.STATUS_SUCCESS:
-                        return FILE_CS_FLAG_CASE_SENSITIVE_DIR == (fcsi.Flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR);
-                    case NTSTATUS.STATUS_NOT_IMPLEMENTED:
-                    case NTSTATUS.STATUS_NOT_SUPPORTED:
-                    case NTSTATUS.STATUS_INVALID_INFO_CLASS:
-                        return false;
-                    default:
-                        throw new IOException(
-                            $"NtQueryInformationFile failed with NTSTATUS 0x{(uint)status:X8}.");
+                if (status == NTSTATUS.STATUS_SUCCESS) {
+                    return FILE_CS_FLAG_CASE_SENSITIVE_DIR == (fcsi.Flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR);
                 }
+                if (CaseSensitiveQueryIsUnsupported(status)) {
+                    return false;
+                }
+                throw new IOException(
+                    $"NtQueryInformationFile failed with NTSTATUS 0x{(uint)status:X8}.");
             }
         }
     }

@@ -1,4 +1,5 @@
-﻿using Microsoft.Win32.SafeHandles;
+﻿using Brows.Win32.PlatformInvoke;
+using Microsoft.Win32.SafeHandles;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -519,6 +520,21 @@ public sealed class Win32KernelServiceTest {
         using var service = new Win32KernelService();
 
         Assert.That(() => service.PathIsCaseSensitive(missing), Throws.TypeOf<Win32Exception>());
+    }
+
+    [TestCase((uint)NTSTATUS.STATUS_NOT_IMPLEMENTED)]
+    [TestCase((uint)NTSTATUS.STATUS_NOT_SUPPORTED)]
+    [TestCase((uint)NTSTATUS.STATUS_INVALID_INFO_CLASS)]
+    [TestCase((uint)NTSTATUS.STATUS_INVALID_PARAMETER)]
+    [TestCase((uint)NTSTATUS.STATUS_INVALID_DEVICE_REQUEST)]
+    public void CaseSensitiveQueryIsUnsupported_WhenFileSystemRejectsTheQuery_ReturnsTrue(uint status) {
+        Assert.That(Win32KernelService.CaseSensitiveQueryIsUnsupported((NTSTATUS)status), Is.True);
+    }
+
+    [TestCase((uint)NTSTATUS.STATUS_ACCESS_DENIED)]
+    [TestCase((uint)NTSTATUS.STATUS_INVALID_HANDLE)]
+    public void CaseSensitiveQueryIsUnsupported_WhenQueryFailsForAnotherReason_ReturnsFalse(uint status) {
+        Assert.That(Win32KernelService.CaseSensitiveQueryIsUnsupported((NTSTATUS)status), Is.False);
     }
 
     [Test]

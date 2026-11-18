@@ -42,11 +42,12 @@ public sealed class DocumentActions(IWin32InteropServices services) {
 ```
 
 `PathsAreEquivalent` compares the identity of existing files or directories, rather than their path text.
-`PathIsCaseSensitive` returns `false` when case-sensitive lookup is disabled or the query is unsupported; other query
-failures are reported by the returned task. `ExecuteDefault` runs a path's default Shell action, while its overload
-`ExecuteDefault(file, with, cancellationToken)` passes `file` to the specified executable. `ExecuteProperties` opens the
-Properties action. These Shell calls run on an STA worker, and their returned tasks report errors. Cancellation can stop
-queued work before the native call starts; it cannot interrupt a native call already running.
+`PathIsCaseSensitive` returns `false` when case-sensitive lookup is disabled or the query is unsupported, as on FAT
+volumes and other file systems that do not implement it; other query failures are reported by the returned task.
+`ExecuteDefault` runs a path's default Shell action, while its overload `ExecuteDefault(file, with, cancellationToken)`
+passes `file` to the specified executable. `ExecuteProperties` opens the Properties action. These Shell calls run on an
+STA worker, and their returned tasks report errors. Cancellation can stop queued work before the native call starts; it
+cannot interrupt a native call already running.
 
 `GetLinkPath` returns a shortcut's target, or `null` if the path is not a shortcut or lookup fails. It does not check
 whether the target exists. Cancellation is propagated through the returned task.

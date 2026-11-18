@@ -47,7 +47,8 @@ public interface IWin32InteropServices : IExport {
     /// </param>
     /// <returns>
     /// A task whose result is <see langword="true"/> when case-sensitive lookup is enabled, or
-    /// <see langword="false"/> when it is disabled or the query is unsupported.
+    /// <see langword="false"/> when it is disabled or the query is unsupported, as on FAT volumes and other file
+    /// systems that do not implement it.
     /// </returns>
     /// <exception cref="Win32Exception">The directory cannot be opened.</exception>
     /// <exception cref="IOException">The native query fails for a reason other than an unsupported query.</exception>

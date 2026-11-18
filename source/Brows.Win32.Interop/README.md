@@ -49,7 +49,7 @@ finally {
 }
 ```
 
-`PathsAreEquivalent` compares the identity of existing files or directories, rather than their path text. `PathIsCaseSensitive` queries a directory's case-sensitivity flag and returns `false` when the query is unsupported. Other query failures throw.
+`PathsAreEquivalent` compares the identity of existing files or directories, rather than their path text. `PathIsCaseSensitive` queries a directory's case-sensitivity flag and returns `false` when the query is unsupported, as on FAT volumes and other file systems that do not implement it. Other query failures throw.
 
 `GetStoredPath` returns an absolute path with the stored casing of each existing file or directory component beneath the volume or share root. Relative paths are resolved against the current directory, while the root spelling is retained from that resolved path. The path and its components must exist and be accessible; invalid paths throw `ArgumentException`, and native lookup failures throw `Win32Exception`.
 
